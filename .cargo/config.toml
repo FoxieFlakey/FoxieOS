@@ -1,0 +1,3 @@
+[alias]
+xtask = "run --target x86_64-unknown-linux-musl --manifest-path ./xtask/Cargo.toml --"
+
