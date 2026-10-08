@@ -62,6 +62,18 @@ pub fn main(_args: BuildArgs) {
     )
     .unwrap();
 
+    println!("Copying htop");
+    util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop")).unwrap();
+
+    println!("Copying terminfo");
+    util::mkdir(crate::rootfs_dir().join("etc")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("etc/terminfo")).unwrap();
+    dircpy::CopyBuilder::new("./extra/terminfo", crate::rootfs_dir().join("etc/terminfo"))
+        .overwrite_if_newer(true)
+        .overwrite_if_size_differs(true)
+        .run()
+        .unwrap();
+
     println!("Copying init");
     util::copy_file(
         crate::target_dir().join("x86_64-unknown-linux-musl/debug/init"),
