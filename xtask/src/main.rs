@@ -73,7 +73,7 @@ fn main() {
                 .arg("virtconsole,chardev=charconsole0,id=console0")
                 .arg("-append")
                 .arg(format!(
-                    "console=hvc0 root=/dev/vda rootfstype=erofs init=/init {}",
+                    "console=hvc0 root=/dev/vda rootfstype=erofs init=/init PATH=/system/bin/:/system/busybox_bins/ {}",
                     boot_args.kernel_args.unwrap_or_default()
                 ))
                 .status()

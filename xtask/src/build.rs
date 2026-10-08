@@ -61,13 +61,20 @@ pub fn main(_args: BuildArgs) {
         crate::rootfs_dir().join("system/bin/busybox"),
     )
     .unwrap();
+    dircpy::CopyBuilder::new(
+        "./extra/busybox_overlay",
+        crate::rootfs_dir().join("system/busybox_bins"),
+    )
+    .overwrite_if_newer(true)
+    .overwrite_if_size_differs(true)
+    .run()
+    .unwrap();
 
     println!("Copying htop");
     util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop")).unwrap();
 
     println!("Copying terminfo");
     util::mkdir(crate::rootfs_dir().join("etc")).unwrap();
-    util::mkdir(crate::rootfs_dir().join("etc/terminfo")).unwrap();
     dircpy::CopyBuilder::new("./extra/terminfo", crate::rootfs_dir().join("etc/terminfo"))
         .overwrite_if_newer(true)
         .overwrite_if_size_differs(true)
