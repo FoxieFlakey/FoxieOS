@@ -8,6 +8,7 @@ use nix::{
 
 mod init_task;
 mod prep_fs;
+mod reaper;
 mod service_manager;
 
 fn do_main() -> anyhow::Result<()> {
@@ -20,6 +21,9 @@ fn do_main() -> anyhow::Result<()> {
     println!("Basic preboot rootfs is ready");
 
     service_manager::run(|rt| {
+        // Start repear
+        reaper::run_reaper();
+
         // Start init tasks
         init_task::run(rt)?;
 
