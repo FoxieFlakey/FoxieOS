@@ -43,6 +43,8 @@ fn main() {
             build::main(boot_args.build);
             println!("Booting");
             let status = std::process::Command::new("qemu-system-x86_64")
+                .arg("-display")
+                .arg("none")
                 .arg("-m")
                 .arg("256")
                 .arg("-cpu")

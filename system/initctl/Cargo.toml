@@ -1,0 +1,12 @@
+[package]
+name = "initctl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+foxie_base = { version = "0.1.0", path = "../../interface/foxie_base" }
+libbinder = { version = "0.1.0", path = "../../libs/libbinder/libbinder" }
+libbinder-basic = { version = "0.1.0", path = "../../libs/libbinder/extras/libbinder-basic" }
+

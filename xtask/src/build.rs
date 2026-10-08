@@ -22,10 +22,38 @@ pub fn main(_args: BuildArgs) {
 
     println!("Creating rootfs");
     util::mkdir(crate::rootfs_dir()).unwrap();
+
+    // Completely new /dev tmpfs, filled only necessary stuffs like
+    // /dev/null, /dev/full, /dev/zero, /dev/random, /dev/urandom
+    // and few others. Does not use kernel's builtin devtmpfs
     util::mkdir(crate::rootfs_dir().join("dev")).unwrap();
+
+    // Heavily censored with subset=pid hidepid=2
+    // Does not apply to /init
     util::mkdir(crate::rootfs_dir().join("proc")).unwrap();
+
+    // Also censored by userspace FUSE daemon, only allowing few
+    // sysfs exposed
+    // Does not apply to /init
     util::mkdir(crate::rootfs_dir().join("sys")).unwrap();
+
+    // Each app gets own limited tmpfs
     util::mkdir(crate::rootfs_dir().join("tmp")).unwrap();
+
+    // tmpfs containing mountpoints for each data
+    // the /data/primary is primary storage, system
+    // will not boot without it
+    // while /data/{uuid}/ is expanded storage
+    util::mkdir(crate::rootfs_dir().join("data")).unwrap();
+
+    // tmpfs, containing mountpoints. Only visible to /init
+    util::mkdir(crate::rootfs_dir().join("mnt")).unwrap();
+
+    // Each sandboxed app/daemon gets private /app_data to store its data
+    // and /app is for static read only resources
+    // For init, these are empty
+    util::mkdir(crate::rootfs_dir().join("app")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("app_data")).unwrap();
 
     println!("Copying busybox");
     util::copy_file(
@@ -38,6 +66,11 @@ pub fn main(_args: BuildArgs) {
     util::copy_file(
         crate::target_dir().join("x86_64-unknown-linux-musl/debug/init"),
         crate::rootfs_dir().join("init"),
+    )
+    .unwrap();
+    util::copy_file(
+        crate::target_dir().join("x86_64-unknown-linux-musl/debug/initctl"),
+        crate::rootfs_dir().join("system/bin/initctl"),
     )
     .unwrap();
 

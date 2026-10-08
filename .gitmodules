@@ -1,0 +1,3 @@
+[submodule "libs/libbinder"]
+	path = libs/libbinder
+	url = git@github.com:FoxieFlakey/libbinder_bweh
