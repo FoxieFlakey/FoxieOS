@@ -6,9 +6,11 @@ use nix::{
     unistd::Pid,
 };
 
+mod constants;
 mod init_task;
 mod prep_fs;
 mod reaper;
+mod sandboxer;
 mod service_manager;
 
 fn do_main() -> anyhow::Result<()> {
@@ -24,8 +26,11 @@ fn do_main() -> anyhow::Result<()> {
         // Start repear
         reaper::run_reaper();
 
+        // Init sandboxer
+        sandboxer::init().context("Initializing sandboxer")?;
+
         // Start init tasks
-        init_task::run(rt)?;
+        init_task::run(rt).context("Running init tasks")?;
 
         init_task::DO_SHUTDOWN_COND.wait_while(&mut init_task::DO_SHUTDOWN.lock(), |x| *x != true);
         Ok(())

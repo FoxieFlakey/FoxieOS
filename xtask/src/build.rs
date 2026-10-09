@@ -92,6 +92,11 @@ pub fn main(_args: BuildArgs) {
         crate::rootfs_dir().join("system/bin/initctl"),
     )
     .unwrap();
+    util::copy_file(
+        crate::target_dir().join("x86_64-unknown-linux-musl/debug/sandbox_helper"),
+        crate::rootfs_dir().join("system/bin/sandbox_helper"),
+    )
+    .unwrap();
 
     println!("Generating EROFS");
     let status = Command::new("mkfs.erofs")

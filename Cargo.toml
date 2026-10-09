@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["interface/foxie_base","system/init", "system/initctl","xtask"]
+members = ["interface/foxie_base","system/init", "system/initctl", "system/sandbox_helper", "xtask"]

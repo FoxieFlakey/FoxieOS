@@ -1,5 +1,5 @@
 use std::{
-    process::Command,
+    path::Path,
     sync::{Arc, OnceLock, Weak},
 };
 
@@ -14,7 +14,16 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
+use nix::{
+    mount::{MsFlags, mount},
+    unistd::Uid,
+};
 use parking_lot::{Condvar, Mutex};
+
+use crate::sandboxer::{
+    Config,
+    sandbox::{Sandbox, SpawnArgs},
+};
 
 pub static INIT: OnceLock<Arc<B<dyn IInit>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
@@ -27,11 +36,37 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     .ok()
     .unwrap();
 
+    let sandbox = Sandbox::new(Config {
+        prep: || {
+            mount(
+                None::<&Path>,
+                "/proc",
+                Some("proc"),
+                MsFlags::MS_NOATIME
+                    | MsFlags::MS_NODIRATIME
+                    | MsFlags::MS_NODEV
+                    | MsFlags::MS_NOEXEC
+                    | MsFlags::MS_NOSUID,
+                Some("hidepid=2,subset=pid"),
+            )
+            .context("Cannot remount proc")?;
+            Ok(())
+        },
+        uid: Uid::from_raw(1000),
+    })
+    .context("Cannot create sandbox for shell")?;
+
     // Lets just pop cmdline for testing
-    Command::new("/system/bin/busybox")
-        .arg("sh")
-        .spawn()
-        .context("Cannot spawn test shell :<")?;
+    let exit_code = sandbox
+        .spawn(&SpawnArgs {
+            path: "/system/bin/busybox".to_string(),
+            argv: vec![],
+            arg0: Some("sh".to_string()),
+        })
+        .context("Cannot spawn test shell :<")?
+        .wait()
+        .context("Cannot wait shell")?;
+    println!("Shell exited with {exit_code}");
 
     Ok(())
 }

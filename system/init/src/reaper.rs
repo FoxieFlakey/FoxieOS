@@ -6,9 +6,14 @@ pub fn run_reaper() {
     thread::spawn(|| {
         println!("init: Reapear running");
         loop {
-            if let Ok(WaitStatus::Exited(pid, code)) = waitpid(None, None) {
-                println!("init: (repear) Process {pid} exited with {code}");
-            }
+            match waitpid(None, None) {
+                Ok(WaitStatus::Exited(pid, code)) => {
+                    println!("init: (repear) Process {pid} exited with {code}");
+                }
+                Ok(_) | Err(_) => {
+                    nix::unistd::sleep(5);
+                }
+            };
         }
     });
 }

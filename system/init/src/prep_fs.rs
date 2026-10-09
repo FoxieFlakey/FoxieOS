@@ -36,6 +36,14 @@ pub fn run() -> anyhow::Result<()> {
     .context("Mounthing /dev")?;
     mount(None::<&Path>, "/proc", Some("proc"), flags, None::<&Path>).context("Mounthing /proc")?;
     mount(None::<&Path>, "/sys", Some("sysfs"), flags, None::<&Path>).context("Mounthing /sys")?;
+    mount(
+        None::<&Path>,
+        "/sys/fs/cgroup",
+        Some("cgroup2"),
+        flags,
+        None::<&Path>,
+    )
+    .context("Mounthing /sys/fs/cgroup")?;
 
     fs::create_dir_all("/dev/binderfs").context("Creating binderfs")?;
 
