@@ -1,7 +1,11 @@
 use std::{fs, path::Path};
 
 use anyhow::Context;
-use nix::mount::{MsFlags, mount};
+use nix::{
+    fcntl::AT_FDCWD,
+    mount::{MsFlags, mount},
+    sys::stat::{FchmodatFlags, Mode, fchmodat},
+};
 
 pub fn run() -> anyhow::Result<()> {
     let flags = MsFlags::MS_NOATIME
@@ -56,5 +60,13 @@ pub fn run() -> anyhow::Result<()> {
         Some("stats=global"),
     )
     .context("Mounting /dev/binderfs")?;
+
+    fchmodat(
+        AT_FDCWD,
+        "/dev/binderfs/binder",
+        Mode::from_bits_retain(0o666),
+        FchmodatFlags::NoFollowSymlink,
+    )
+    .context("Cannot chmod binder file")?;
     Ok(())
 }
