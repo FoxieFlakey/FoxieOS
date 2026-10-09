@@ -49,6 +49,9 @@ pub fn main(_args: BuildArgs) {
     // tmpfs, containing mountpoints. Only visible to /init
     util::mkdir(crate::rootfs_dir().join("mnt")).unwrap();
 
+    // most of time its empty, only mounted during initializing sandbox
+    util::mkdir(crate::rootfs_dir().join("sandbox_root")).unwrap();
+
     // Each sandboxed app/daemon gets private /app_data to store its data
     // and /app is for static read only resources
     // For init, these are empty

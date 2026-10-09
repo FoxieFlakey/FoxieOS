@@ -2,6 +2,7 @@ use std::{
     collections::VecDeque,
     fs,
     os::fd::AsFd,
+    path::Path,
     sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -14,20 +15,21 @@ use std::{
 use anyhow::Context;
 use nix::{
     fcntl::{OFlag, open},
+    mount::{MsFlags, mount},
     sched::{CloneFlags, setns, unshare},
     sys::stat::Mode,
-    unistd::Uid,
+    unistd::{Uid, chroot, fchdir},
 };
 use openat::Dir;
 use parking_lot::Mutex;
 
-use crate::{constants::SANDBOXER_CGROUP_DIR, sandboxer::sandbox::Sandbox};
+use crate::{constants::SANDBOXER_CGROUP_DIR, root_dev, sandboxer::sandbox::Sandbox};
 
 pub mod sandbox;
 
 pub struct Config<F>
 where
-    F: FnOnce() -> anyhow::Result<()>,
+    F: FnOnce(Uid) -> anyhow::Result<()>,
 {
     // Function to be called to prep the sandbox
     // here its called when already in sandbox
@@ -88,7 +90,7 @@ fn get_cgroup_dir() -> &'static Dir {
 
 fn create_sandbox<F>(config: Config<F>) -> anyhow::Result<Sandbox>
 where
-    F: FnOnce() -> anyhow::Result<()>,
+    F: FnOnce(Uid) -> anyhow::Result<()>,
 {
     let orig_namespace = open(
         "/proc/self/ns/mnt",
@@ -96,11 +98,22 @@ where
         Mode::empty(),
     )
     .context("Cannot save current namespace")?;
+    let root_fd = open("/", OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
+        .context("Cannot save current root")?;
+
+    // TODO: Cleaner way? doesnt harm because init, wont ever do chroot for entire process
+    // so its fine each thread 'fs' is detached from the rest. Nor does init will chdir
+    unshare(CloneFlags::CLONE_FS).context("Cannot unsahre CLONE_FS")?;
 
     // Create new namespace
     unshare(CloneFlags::CLONE_NEWNS).context("Cannot create new mount namespace")?;
 
-    let unsandbox = move || {
+    let unsandbox = |is_chrooted: bool| {
+        if is_chrooted {
+            fchdir(root_fd.as_fd()).expect("Cannot fchdir to old root");
+            chroot(".").expect("Cannot restore root directory");
+        }
+
         // Panicking because now the caller thread
         // has inconsistent namespace compared to others. Which might creates unwanted
         // consequences
@@ -113,16 +126,48 @@ where
         OFlag::O_CLOEXEC | OFlag::O_RDONLY,
         Mode::empty(),
     )
-    .inspect_err(|_| unsandbox())
+    .inspect_err(|_| unsandbox(false))
     .context("Cannot save sandboxed namespace")?;
 
+    mount(
+        Some(root_dev::get_root_dev()),
+        "/sandbox_root",
+        Some("erofs"),
+        MsFlags::MS_NODEV
+            | MsFlags::MS_NOATIME
+            | MsFlags::MS_NODIRATIME
+            | MsFlags::MS_NOSUID
+            | MsFlags::MS_RDONLY,
+        None::<&Path>,
+    )
+    .inspect_err(|_| unsandbox(false))
+    .context("Cannot mount sandbox root")?;
+
+    let sandbox_root_fs = open(
+        "/sandbox_root",
+        OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .inspect_err(|_| unsandbox(false))
+    .context("Cannot open sandbox root directory")?;
+
+    fchdir(sandbox_root_fs.as_fd()).context("Cannot fchdir to new root")?;
+    chroot(".")
+        .inspect_err(|_| {
+            // chdir back to real root... if this fail. there would be
+            // inconsistent state. We cannot restore
+            // so panic
+            fchdir(root_fd.as_fd()).expect("Cannot fchdir to old root");
+        })
+        .context("Cannot restore root directory")?;
+
     // Execute sandbox preparations
-    (config.prep)()
+    (config.prep)(config.uid)
         .context("Cannot run sandbox preperation function")
-        .inspect_err(|_| unsandbox())?;
+        .inspect_err(|_| unsandbox(true))?;
 
     // Then restore back the original.
-    unsandbox();
+    unsandbox(true);
 
     let id = SANDBOX_ID_FREE
         .lock()
@@ -150,6 +195,7 @@ where
             cgroup: cgroup_dir,
             uid: config.uid,
             mnt_namespace: sandboxed_mnt_namespace,
+            root_fd: sandbox_root_fs,
         }),
     })
 }

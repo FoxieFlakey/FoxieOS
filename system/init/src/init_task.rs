@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    sync::{Arc, OnceLock, Weak},
-};
+use std::sync::{Arc, OnceLock, Weak};
 
 use anyhow::Context;
 use foxie_base::{
@@ -14,15 +11,15 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
-use nix::{
-    mount::{MsFlags, mount},
-    unistd::Uid,
-};
+use nix::unistd::Uid;
 use parking_lot::{Condvar, Mutex};
 
-use crate::sandboxer::{
-    Config,
-    sandbox::{Sandbox, SpawnArgs},
+use crate::{
+    sandbox_profiles,
+    sandboxer::{
+        Config,
+        sandbox::{Sandbox, SpawnArgs},
+    },
 };
 
 pub static INIT: OnceLock<Arc<B<dyn IInit>>> = OnceLock::new();
@@ -37,21 +34,7 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     .unwrap();
 
     let sandbox = Sandbox::new(Config {
-        prep: || {
-            mount(
-                None::<&Path>,
-                "/proc",
-                Some("proc"),
-                MsFlags::MS_NOATIME
-                    | MsFlags::MS_NODIRATIME
-                    | MsFlags::MS_NODEV
-                    | MsFlags::MS_NOEXEC
-                    | MsFlags::MS_NOSUID,
-                Some("hidepid=2,subset=pid"),
-            )
-            .context("Cannot remount proc")?;
-            Ok(())
-        },
+        prep: sandbox_profiles::app_profile,
         uid: Uid::from_raw(1000),
     })
     .context("Cannot create sandbox for shell")?;

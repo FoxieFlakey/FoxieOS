@@ -16,7 +16,7 @@ use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     sched::{CloneFlags, setns},
     sys::prctl,
-    unistd::{setgid, setgroups, setresuid},
+    unistd::{chroot, fchdir, setgid, setgroups, setresuid},
 };
 
 #[derive(Parser)]
@@ -35,6 +35,8 @@ pub struct Cli {
     procs_fd: u32,
     #[arg(long)]
     mnt_namespace: u32,
+    #[arg(long)]
+    root_fd: u32,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     argv: Vec<String>,
@@ -81,6 +83,13 @@ fn main() -> Result<Infallible, anyhow::Error> {
         .context("Cannot enter sandboxed cgroup")?;
 
     setns(mnt_namespace.as_fd(), CloneFlags::CLONE_NEWNS).context("Cannot set mount namespace")?;
+    let root_fd =
+        unsafe { OwnedFd::from_raw_fd(cli.root_fd.try_into().context("Checking root_fd fd")?) };
+    set_cloexec(procs_fd.as_fd()).context("Setting close on exec for root_fd")?;
+
+    // now chroot
+    fchdir(root_fd.as_fd()).context("Cannot fchdir to new root")?;
+    chroot(".").context("Cannot chroot to new root")?;
 
     // Drop groups
     setgroups(&[]).context("Cannot clear supplementary groups")?;

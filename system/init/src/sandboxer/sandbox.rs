@@ -16,6 +16,7 @@ pub(super) struct Inner {
     pub(super) cgroup: Dir,
     pub(super) uid: Uid,
     pub(super) mnt_namespace: OwnedFd,
+    pub(super) root_fd: OwnedFd,
 }
 
 pub struct Sandbox {
@@ -31,7 +32,7 @@ pub struct SpawnArgs {
 impl Sandbox {
     pub fn new<F>(config: super::Config<F>) -> anyhow::Result<Self>
     where
-        F: FnOnce() -> anyhow::Result<()>,
+        F: FnOnce(Uid) -> anyhow::Result<()>,
     {
         super::create_sandbox(config)
     }
@@ -58,6 +59,8 @@ impl Sandbox {
             .map(OwnedFd::from)?;
         let mnt_namespace_fd = nix::unistd::dup(self.get_inner().mnt_namespace.as_fd())
             .context("Cannot dup namespace fd")?;
+        let root_fd =
+            nix::unistd::dup(self.get_inner().root_fd.as_fd()).context("Cannot dup root fd")?;
 
         // Asking helper to downgrade privilege, mainly because its complicated
         // to do in same process a.k.a very fragile with .pre_exec
@@ -67,6 +70,8 @@ impl Sandbox {
         helper.arg(format!("{}", procs_fd.as_raw_fd()));
         helper.arg("--mnt-namespace");
         helper.arg(format!("{}", mnt_namespace_fd.as_raw_fd()));
+        helper.arg("--root-fd");
+        helper.arg(format!("{}", root_fd.as_raw_fd()));
         helper.arg("--binary");
         helper.arg(&args.path);
         helper.arg("--uid");
@@ -80,7 +85,7 @@ impl Sandbox {
         helper.arg("--");
         helper.args(&args.argv);
 
-        helper.preserved_fds(vec![procs_fd, mnt_namespace_fd]);
+        helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
 
         Ok(helper
             .spawn()

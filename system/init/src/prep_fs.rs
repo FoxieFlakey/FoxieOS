@@ -7,6 +7,8 @@ use nix::{
     sys::stat::{FchmodatFlags, Mode, fchmodat},
 };
 
+use crate::root_dev;
+
 pub fn run() -> anyhow::Result<()> {
     let flags = MsFlags::MS_NOATIME
         | MsFlags::MS_NODIRATIME
@@ -34,7 +36,8 @@ pub fn run() -> anyhow::Result<()> {
         None::<&Path>,
         "/dev",
         Some("devtmpfs"),
-        flags,
+        // Devtmpfs well contains devices
+        flags & !MsFlags::MS_NODEV,
         None::<&Path>,
     )
     .context("Mounthing /dev")?;
@@ -68,5 +71,7 @@ pub fn run() -> anyhow::Result<()> {
         FchmodatFlags::NoFollowSymlink,
     )
     .context("Cannot chmod binder file")?;
+
+    root_dev::discover_root().context("Cannot find root device")?;
     Ok(())
 }
