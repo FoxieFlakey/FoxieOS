@@ -1,34 +1,23 @@
 use std::process::Command;
 
-use anyhow::{Context, bail};
-use nix::{
-    sys::reboot::{RebootMode, reboot},
-    unistd::Pid,
-};
+use anyhow::Context;
+use nix::sys::reboot::{RebootMode, reboot};
 
 mod constants;
 mod init_task;
 mod prep_fs;
-mod reaper;
 mod root_dev;
 mod sandbox_profiles;
 mod sandboxer;
 mod service_manager;
 
 fn do_main() -> anyhow::Result<()> {
-    if Pid::this().as_raw() != 1 {
-        bail!("Must run as PID 1");
-    }
-
     prep_fs::run().context("Preparing rootfs")?;
 
     println!("Root device was found at {}", root_dev::get_root_dev());
     println!("Basic preboot rootfs is ready");
 
     service_manager::run(|rt| {
-        // Start repear
-        reaper::run_reaper();
-
         // Init sandboxer
         sandboxer::init().context("Initializing sandboxer")?;
 

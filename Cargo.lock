@@ -274,6 +274,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nix",
+ "parking_lot",
+]
+
+[[package]]
 name = "initctl"
 version = "0.1.0"
 dependencies = [
@@ -659,6 +668,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bed810ee007d8e7f9cf20b4774e7198142fa27186e0f805871da7f3c39eaf333"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "tty_spawner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nix",
 ]
 
 [[package]]
