@@ -274,21 +274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "init"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "command-fds",
- "enumflags2",
- "foxie_base",
- "libbinder",
- "libbinder-basic",
- "nix",
- "openat",
- "parking_lot",
-]
-
-[[package]]
 name = "initctl"
 version = "0.1.0"
 dependencies = [
@@ -600,6 +585,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "system_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command-fds",
+ "enumflags2",
+ "foxie_base",
+ "libbinder",
+ "libbinder-basic",
+ "nix",
+ "openat",
+ "parking_lot",
 ]
 
 [[package]]

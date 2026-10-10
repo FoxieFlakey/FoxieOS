@@ -86,7 +86,7 @@ pub fn main(_args: BuildArgs) {
 
     println!("Copying init");
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/init"),
+        crate::target_dir().join("x86_64-unknown-linux-musl/debug/system_server"),
         crate::rootfs_dir().join("init"),
     )
     .unwrap();
