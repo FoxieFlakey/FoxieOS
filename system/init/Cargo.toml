@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-nix = { version = "0.31.3", features = ["process"] }
+nix = { version = "0.31.3", features = ["process", "signal"] }
 parking_lot = "0.12.5"

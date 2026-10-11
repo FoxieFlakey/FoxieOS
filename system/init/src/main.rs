@@ -28,37 +28,52 @@ fn main() -> anyhow::Result<()> {
 
     thread::spawn(shell_spawner);
 
+    fn check_shell(pid: Pid, is_abnormal_exit: bool) {
+        // Check if its one of running root shells
+        for shell in SHELLS.lock().iter_mut() {
+            if let Some(active_pid) = shell.pid {
+                if active_pid == pid {
+                    println!("init: Debug shell {active_pid} is dead");
+                    // Shell is dead
+                    shell.pid = None;
+                    shell.retry_at = Instant::now();
+                    WAKE_SPAWNER.notify_one();
+
+                    // Because it exits abnormally put timing delay
+                    // to not spam. If it exits normally put 1 sec delay
+                    if is_abnormal_exit {
+                        shell.retry_at += ABNORMAL_RETRY_DURATION;
+                    } else {
+                        shell.retry_at += NORMAL_RETRY_DURATION;
+                    }
+                }
+            }
+        }
+    }
+
     loop {
-        match waitpid(None, None) {
-            Ok(WaitStatus::Exited(pid, code)) => {
+        match waitpid(None, None).context("Cannot do waitpid")? {
+            WaitStatus::Exited(pid, code) => {
                 println!("init: (repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
                     bail!("System server must not exit at all. It exited with code {code}");
                 }
 
-                // Check if its one of running root shells
-                for shell in SHELLS.lock().iter_mut() {
-                    if let Some(active_pid) = shell.pid {
-                        if active_pid == pid {
-                            // Shell is dead
-                            shell.pid = None;
-                            shell.retry_at = Instant::now();
-                            WAKE_SPAWNER.notify_one();
+                check_shell(pid, code != 0);
+            }
+            WaitStatus::Signaled(pid, signal, is_core_dumped) => {
+                println!(
+                    "init: (repear) Process {pid} killed with {signal}{}",
+                    if is_core_dumped { " (core dumped)" } else { "" }
+                );
 
-                            // Because it exits abnormally put timing delay
-                            // to not spam. If it exits normally put 1 sec delay
-                            if code != 0 {
-                                shell.retry_at += NORMAL_RETRY_DURATION;
-                            } else {
-                                shell.retry_at += ABNORMAL_RETRY_DURATION;
-                            }
-                        }
-                    }
-                }
+                check_shell(pid, true);
             }
-            Ok(_) | Err(_) => {
-                nix::unistd::sleep(5);
-            }
+            WaitStatus::Stopped(_, _)
+            | WaitStatus::PtraceEvent(_, _, _)
+            | WaitStatus::PtraceSyscall(_)
+            | WaitStatus::Continued(_)
+            | WaitStatus::StillAlive => continue,
         };
     }
 }
@@ -88,7 +103,7 @@ fn shell_spawner() {
 
         let condition = |x: &mut Box<[ShellState]>| {
             // Wait until there a shell that exit
-            x.iter().find(|x| x.pid.is_none()).is_some()
+            x.iter().find(|x| x.pid.is_none()).is_none()
         };
         if let Some(x) = earlier_deadline {
             WAKE_SPAWNER.wait_while_until(&mut shells, condition, x);
@@ -99,11 +114,12 @@ fn shell_spawner() {
         for shell in shells
             .iter_mut()
             .filter(|x| x.pid.is_none())
-            .filter(|x| Instant::now() > x.retry_at)
+            .filter(|x| Instant::now() >= x.retry_at)
         {
             // We retry shell that is just died or waited long enough
             match shell.spawn() {
                 Ok(x) => {
+                    println!("init: Respawned debug shell at {}", shell.dev);
                     shell.pid = Some(x);
                 }
                 Err(e) => {
