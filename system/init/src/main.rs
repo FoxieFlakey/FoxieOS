@@ -1,4 +1,6 @@
 use std::{
+    convert::Infallible,
+    env,
     process::Command,
     sync::LazyLock,
     thread,
@@ -12,14 +14,17 @@ use nix::{
 };
 use parking_lot::{Condvar, Mutex};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<Infallible> {
     if Pid::this().as_raw() != 1 {
         bail!("Must run as PID 1");
     }
 
+    let args = env::args().collect::<Vec<_>>();
+
     // We will wait outselves later, for why Child is dropped
     let server_pid = i32::try_from(
         Command::new("/system/bin/system_server")
+            .args(args)
             .spawn()
             .context("Cannot spawn system_server")?
             .id(),
