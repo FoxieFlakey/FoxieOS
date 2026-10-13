@@ -65,7 +65,6 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     )
     .context("Copying libgcc_s.so")?;
 
-    println!("Copying busybox");
     util::copy_file(
         "./extra/busybox",
         crate::rootfs_dir().join("system/bin/busybox"),
@@ -80,11 +79,9 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     .run()
     .context("Copying busybox_overlay")?;
 
-    println!("Copying htop");
     util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop"))
         .context("Copying htop")?;
 
-    println!("Copying terminfo");
     dircpy::CopyBuilder::new("./extra/terminfo", crate::rootfs_dir().join("etc/terminfo"))
         .overwrite_if_newer(true)
         .overwrite_if_size_differs(true)
