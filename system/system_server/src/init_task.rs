@@ -1,6 +1,5 @@
 use std::sync::{Arc, OnceLock, Weak};
 
-use anyhow::Context;
 use foxie_base::{
     IObject,
     init::{IInit, ShutdownError, iinit},
@@ -11,16 +10,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
-use nix::unistd::Uid;
 use parking_lot::{Condvar, Mutex};
-
-use crate::{
-    sandbox_profiles,
-    sandboxer::{
-        Config,
-        sandbox::{Sandbox, SpawnArgs},
-    },
-};
 
 pub static INIT: OnceLock<Arc<B<dyn IInit>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
@@ -32,24 +22,6 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     })))
     .ok()
     .unwrap();
-
-    let sandbox = Sandbox::new(Config {
-        prep: sandbox_profiles::app_profile,
-        uid: Uid::from_raw(1000),
-    })
-    .context("Cannot create sandbox for shell")?;
-
-    // Lets just pop cmdline for testing
-    let exit_code = sandbox
-        .spawn(&SpawnArgs {
-            path: "/system/bin/busybox".to_string(),
-            argv: vec![],
-            arg0: Some("sh".to_string()),
-        })
-        .context("Cannot spawn test shell :<")?
-        .wait()
-        .context("Cannot wait shell")?;
-    println!("Shell exited with {exit_code}");
 
     Ok(())
 }

@@ -7,7 +7,10 @@ mod constants;
 mod init_task;
 mod prep_fs;
 mod root_dev;
+// NOTE: Currently the sandbox is unused
+#[allow(unused)]
 mod sandbox_profiles;
+#[allow(unused)]
 mod sandboxer;
 mod service_manager;
 
