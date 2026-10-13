@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use clap::{Args, Parser, Subcommand};
 
 use crate::build::BuildArgs;
@@ -50,11 +50,13 @@ fn main() -> anyhow::Result<()> {
                 .arg("-cpu")
                 .arg("EPYC-Rome-v5")
                 .arg("-kernel")
-                .arg(&*crate::kernel_file().to_string_lossy())
+                .arg(crate::kernel_file())
                 .arg("-drive")
                 .arg(format!(
                     "file={},format=raw,if=none,id=hd0",
-                    crate::rootfs_image_file().display()
+                    crate::rootfs_image_file().into_os_string()
+                        .into_string()
+                        .map_err(|x| anyhow!("Path contained non UTF-8 sequence: {x:#?}"))?
                 ))
                 .arg("-device")
                 .arg("virtio-gpu-pci")
@@ -75,7 +77,7 @@ fn main() -> anyhow::Result<()> {
                 .arg("virtconsole,chardev=charconsole0,id=console0")
                 .arg("-append")
                 .arg(format!(
-                    "root=/dev/vda rootfstype=erofs init=/init PATH=/system/bin/:/system/busybox_bins/ {}",
+                    "root=/dev/vda console=hvc0 rootfstype=erofs init=/system/bin/init PATH=/system/bin/:/system/busybox_bins/ {}",
                     boot_args.kernel_args.unwrap_or_default()
                 ))
                 .status()
