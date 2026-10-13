@@ -1,6 +1,9 @@
 use std::{
     convert::Infallible,
     env,
+    fs::OpenOptions,
+    os::fd::AsFd,
+    path::Path,
     process::Command,
     sync::LazyLock,
     thread,
@@ -9,8 +12,9 @@ use std::{
 
 use anyhow::{Context, bail};
 use nix::{
+    mount::{MsFlags, mount},
     sys::wait::{WaitStatus, waitpid},
-    unistd::Pid,
+    unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout},
 };
 use parking_lot::{Condvar, Mutex};
 
@@ -18,6 +22,26 @@ fn main() -> anyhow::Result<Infallible> {
     if Pid::this().as_raw() != 1 {
         bail!("Must run as PID 1");
     }
+
+    mount(
+        None::<&Path>,
+        "/dev",
+        Some("devtmpfs"),
+        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
+        None::<&Path>,
+    )
+    .context("Mounthing /dev")?;
+
+    // Replace stdio with one from /dev/ttyprintk
+    let tty = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/ttyprintk")
+        .context("Cannot open /dev/ttyprintk")?;
+    dup2_stdin(tty.as_fd()).context("Cannot dup into stdin")?;
+    dup2_stdout(tty.as_fd()).context("Cannot dup into stdout")?;
+    dup2_stderr(tty.as_fd()).context("Cannot dup into stderr")?;
+    drop(tty);
 
     let args = env::args().collect::<Vec<_>>();
 
@@ -150,12 +174,7 @@ impl ShellState {
         Self {
             dev,
             pid: None,
-            // Lets hardcode so it retries 2 secs later
-            // because its constructed very early in init
-            // lifetime, the system_server might not started
-            // yet to mount /dev so give small delay to
-            // allow it do that
-            retry_at: Instant::now() + Duration::from_secs(2),
+            retry_at: Instant::now(),
         }
     }
 

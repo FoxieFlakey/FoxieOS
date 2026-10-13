@@ -32,15 +32,8 @@ pub fn run() -> anyhow::Result<()> {
     )
     .context("Mounting /mnt tmpfs")?;
 
-    mount(
-        None::<&Path>,
-        "/dev",
-        Some("devtmpfs"),
-        // Devtmpfs well contains devices
-        flags & !MsFlags::MS_NODEV,
-        None::<&Path>,
-    )
-    .context("Mounthing /dev")?;
+    // NOTE: devtmpfs is mounted by init, we dont need to do anything here
+
     mount(None::<&Path>, "/proc", Some("proc"), flags, None::<&Path>).context("Mounthing /proc")?;
     mount(None::<&Path>, "/sys", Some("sysfs"), flags, None::<&Path>).context("Mounthing /sys")?;
     mount(

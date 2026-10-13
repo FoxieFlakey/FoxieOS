@@ -55,6 +55,8 @@ fn main() {
                     crate::rootfs_image_file().display()
                 ))
                 .arg("-device")
+                .arg("virtio-gpu-pci")
+                .arg("-device")
                 .arg("virtio-blk-pci,drive=hd0")
                 .arg("-smp")
                 .arg(format!(
