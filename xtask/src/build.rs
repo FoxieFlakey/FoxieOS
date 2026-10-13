@@ -4,24 +4,30 @@ use clap::Args;
 
 use crate::util;
 
+mod syslib;
+
 #[derive(Args)]
 pub struct BuildArgs {}
 
 pub fn main(_args: BuildArgs) {
+    println!("Creating rootfs");
+    util::mkdir(crate::rootfs_dir()).unwrap();
+
+    println!("Building syslibs");
+    syslib::build();
+
     let status = Command::new("cargo")
         .arg("build")
+        .arg("-Zjson-target-spec")
+        .arg("-Zbuild-std=core,alloc,std,panic_unwind")
         .arg("--target")
-        .arg("x86_64-unknown-linux-musl")
-        .env("RUSTFLAGS", "-C relocation-model=static")
+        .arg("x86_64-foxieos-linux-musl.json")
         .status()
         .expect("Failed to execute cargo build");
 
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
-
-    println!("Creating rootfs");
-    util::mkdir(crate::rootfs_dir()).unwrap();
 
     // Completely new /dev tmpfs, filled only necessary stuffs like
     // /dev/null, /dev/full, /dev/zero, /dev/random, /dev/urandom
@@ -45,6 +51,19 @@ pub fn main(_args: BuildArgs) {
     // will not boot without it
     // while /data/{uuid}/ is expanded storage
     util::mkdir(crate::rootfs_dir().join("data")).unwrap();
+
+    // Yo, gcc, you're bedrock overything
+    util::mkdir(crate::rootfs_dir().join("lib")).unwrap();
+    util::copy_file(
+        "./extra/libgcc_s.so",
+        crate::rootfs_dir().join("lib/libgcc_s.so.1"),
+    )
+    .unwrap();
+    util::copy_file(
+        "./extra/libgcc_s.so",
+        crate::rootfs_dir().join("lib/libgcc_s.so"),
+    )
+    .unwrap();
 
     // tmpfs, containing mountpoints. Only visible to /init
     util::mkdir(crate::rootfs_dir().join("mnt")).unwrap();
@@ -86,27 +105,27 @@ pub fn main(_args: BuildArgs) {
 
     println!("Copying init");
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/init"),
+        crate::target_dir().join("x86_64-foxieos-linux-musl/debug/init"),
         crate::rootfs_dir().join("init"),
     )
     .unwrap();
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/system_server"),
+        crate::target_dir().join("x86_64-foxieos-linux-musl/debug/system_server"),
         crate::rootfs_dir().join("system/bin/system_server"),
     )
     .unwrap();
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/tty_spawner"),
+        crate::target_dir().join("x86_64-foxieos-linux-musl/debug/tty_spawner"),
         crate::rootfs_dir().join("system/bin/tty_spawner"),
     )
     .unwrap();
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/initctl"),
+        crate::target_dir().join("x86_64-foxieos-linux-musl/debug/initctl"),
         crate::rootfs_dir().join("system/bin/initctl"),
     )
     .unwrap();
     util::copy_file(
-        crate::target_dir().join("x86_64-unknown-linux-musl/debug/sandbox_helper"),
+        crate::target_dir().join("x86_64-foxieos-linux-musl/debug/sandbox_helper"),
         crate::rootfs_dir().join("system/bin/sandbox_helper"),
     )
     .unwrap();

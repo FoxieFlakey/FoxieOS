@@ -1,8 +1,9 @@
+#![feature(exit_status_error)]
+
 use std::{
     env,
     num::NonZero,
     path::{Path, PathBuf},
-    process::exit,
     thread,
 };
 
@@ -42,7 +43,7 @@ fn main() {
         Commands::Boot(boot_args) => {
             build::main(boot_args.build);
             println!("Booting");
-            let status = std::process::Command::new("qemu-system-x86_64")
+            std::process::Command::new("qemu-system-x86_64")
                 .arg("-m")
                 .arg("256")
                 .arg("-cpu")
@@ -73,15 +74,13 @@ fn main() {
                 .arg("virtconsole,chardev=charconsole0,id=console0")
                 .arg("-append")
                 .arg(format!(
-                    "root=/dev/vda rootfstype=erofs init=/init PATH=/system/bin/:/system/busybox_bins/ {}",
+                    "console=hvc0 root=/dev/vda rootfstype=erofs init=/init PATH=/system/bin/:/system/busybox_bins/ {}",
                     boot_args.kernel_args.unwrap_or_default()
                 ))
                 .status()
-                .expect("Failed to boot VM");
-
-            if !status.success() {
-                exit(status.code().unwrap_or(1));
-            };
+                .expect("Failed to boot VM")
+                .exit_ok()
+                .unwrap();
         }
     }
 }
