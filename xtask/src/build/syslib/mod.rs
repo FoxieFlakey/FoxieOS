@@ -1,11 +1,15 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
+
 // Musl libc, the base of the system
 mod musl;
 
-pub fn build() {
+pub fn build() -> anyhow::Result<()> {
     println!("Building musl libc");
-    musl::build();
+    musl::build().context("Building musl libc")?;
+
+    Ok(())
 }
 
 pub fn get_syslib_src_dir() -> PathBuf {

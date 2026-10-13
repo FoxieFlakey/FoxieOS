@@ -7,6 +7,7 @@ use std::{
     thread,
 };
 
+use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 
 use crate::build::BuildArgs;
@@ -34,14 +35,14 @@ struct BootArgs {
     kernel_args: Option<String>,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     env::set_current_dir(project_dir()).unwrap();
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Build(build_args) => build::main(build_args),
+        Commands::Build(build_args) => build::main(build_args).context("Building system"),
         Commands::Boot(boot_args) => {
-            build::main(boot_args.build);
+            build::main(boot_args.build).context("Building system")?;
             println!("Booting");
             std::process::Command::new("qemu-system-x86_64")
                 .arg("-m")
@@ -78,9 +79,9 @@ fn main() {
                     boot_args.kernel_args.unwrap_or_default()
                 ))
                 .status()
-                .expect("Failed to boot VM")
+                .context("Boot VM with QEMU")?
                 .exit_ok()
-                .unwrap();
+                .context("QEMU VM exited")
         }
     }
 }

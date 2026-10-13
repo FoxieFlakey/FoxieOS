@@ -1,11 +1,15 @@
 use std::{fs::File, num::NonZero, path::PathBuf, process::Command, thread};
 
+use anyhow::Context;
+
 use crate::{build::syslib, util};
 
-pub fn build() {
-    util::mkdir(get_musl_build_dir()).unwrap();
+pub fn build() -> anyhow::Result<()> {
+    util::mkdir(get_musl_build_dir()).context("Creating musl build dir")?;
 
-    let build_dir = get_musl_build_dir().canonicalize().unwrap();
+    let build_dir = get_musl_build_dir()
+        .canonicalize()
+        .context("Canonicalize Musl build dir path")?;
     if !build_dir.join("uwu").exists() {
         // ./configure isnt ran yet
         Command::new(get_musl_src_dir().join("configure"))
@@ -23,12 +27,12 @@ pub fn build() {
             .arg("AR=llvm-ar")
             .arg("RANLIB=llvm-ranlib")
             .status()
-            .unwrap()
+            .context("Waiting for ./configure result")?
             .exit_ok()
-            .unwrap();
+            .context("Running configure")?;
 
         // Mark that configure has ran
-        File::create(build_dir.join("uwu")).unwrap();
+        File::create(build_dir.join("uwu")).context("Marking if ./configure is done")?;
     }
 
     Command::new("make")
@@ -41,17 +45,20 @@ pub fn build() {
             "DESTDIR={}",
             crate::rootfs_dir()
                 .canonicalize()
-                .unwrap()
+                .context("Canonicalizing rootfs dir")?
                 .into_os_string()
                 .into_string()
-                .map_err(|_| "Contains not UTF-8 valid characters")
-                .unwrap()
+                .map_err(|x| anyhow::anyhow!(
+                    "Path to rootfs dir is not valid UTF-8 string: {x:#?}",
+                ))?
         ))
         .arg("install")
         .status()
-        .unwrap()
+        .context("Waiting for 'make install' result")?
         .exit_ok()
-        .unwrap();
+        .context("Compiling Musl libc")?;
+
+    Ok(())
 }
 
 fn get_musl_src_dir() -> PathBuf {

@@ -1,5 +1,6 @@
-use std::process::{Command, exit};
+use std::process::Command;
 
+use anyhow::Context;
 use clap::Args;
 
 use crate::util;
@@ -9,80 +10,78 @@ mod syslib;
 #[derive(Args)]
 pub struct BuildArgs {}
 
-pub fn main(_args: BuildArgs) {
+pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     println!("Creating rootfs");
-    util::mkdir(crate::rootfs_dir()).unwrap();
+    util::mkdir(crate::rootfs_dir()).context("Creating rootfs dir")?;
 
     println!("Building syslibs");
-    syslib::build();
+    syslib::build().context("Building syslib")?;
 
-    let status = Command::new("cargo")
+    Command::new("cargo")
         .arg("build")
         .arg("-Zjson-target-spec")
         .arg("-Zbuild-std=core,alloc,std,panic_unwind")
         .arg("--target")
         .arg("x86_64-foxieos-linux-musl.json")
         .status()
-        .expect("Failed to execute cargo build");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+        .context("Waiting for cargo build result")?
+        .exit_ok()
+        .context("Building system binaries")?;
 
     // Completely new /dev tmpfs, filled only necessary stuffs like
     // /dev/null, /dev/full, /dev/zero, /dev/random, /dev/urandom
     // and few others. Does not use kernel's builtin devtmpfs
-    util::mkdir(crate::rootfs_dir().join("dev")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("dev")).context("Creating dev dir")?;
 
     // Heavily censored with subset=pid hidepid=2
     // Does not apply to /init
-    util::mkdir(crate::rootfs_dir().join("proc")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("proc")).context("Creating proc dir")?;
 
     // Also censored by userspace FUSE daemon, only allowing few
     // sysfs exposed
     // Does not apply to /init
-    util::mkdir(crate::rootfs_dir().join("sys")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("sys")).context("Creating sys dir")?;
 
     // Each app gets own limited tmpfs
-    util::mkdir(crate::rootfs_dir().join("tmp")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("tmp")).context("Creating tmp dir")?;
 
     // tmpfs containing mountpoints for each data
     // the /data/primary is primary storage, system
     // will not boot without it
     // while /data/{uuid}/ is expanded storage
-    util::mkdir(crate::rootfs_dir().join("data")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("data")).context("Creating data dir")?;
 
     // Yo, gcc, you're bedrock overything
-    util::mkdir(crate::rootfs_dir().join("lib")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("lib")).context("Creating lib dir")?;
     util::copy_file(
         "./extra/libgcc_s.so",
         crate::rootfs_dir().join("lib/libgcc_s.so.1"),
     )
-    .unwrap();
+    .context("Copying libgcc_s.so")?;
     util::copy_file(
         "./extra/libgcc_s.so",
         crate::rootfs_dir().join("lib/libgcc_s.so"),
     )
-    .unwrap();
+    .context("Copying libgcc_s.so")?;
 
-    // tmpfs, containing mountpoints. Only visible to /init
-    util::mkdir(crate::rootfs_dir().join("mnt")).unwrap();
+    // tmpfs, containing mountpoints. Only visible to system_server
+    util::mkdir(crate::rootfs_dir().join("mnt")).context("Creating mnt dir")?;
 
     // most of time its empty, only mounted during initializing sandbox
-    util::mkdir(crate::rootfs_dir().join("sandbox_root")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("sandbox_root")).context("Creating sandbox_root dir")?;
 
     // Each sandboxed app/daemon gets private /app_data to store its data
     // and /app is for static read only resources
     // For init, these are empty
-    util::mkdir(crate::rootfs_dir().join("app")).unwrap();
-    util::mkdir(crate::rootfs_dir().join("app_data")).unwrap();
+    util::mkdir(crate::rootfs_dir().join("app")).context("Creating app dir")?;
+    util::mkdir(crate::rootfs_dir().join("app_data")).context("Creating app_data dir")?;
 
     println!("Copying busybox");
     util::copy_file(
         "./extra/busybox",
         crate::rootfs_dir().join("system/bin/busybox"),
     )
-    .unwrap();
+    .context("Copying busybox")?;
     dircpy::CopyBuilder::new(
         "./extra/busybox_overlay",
         crate::rootfs_dir().join("system/busybox_bins"),
@@ -90,10 +89,11 @@ pub fn main(_args: BuildArgs) {
     .overwrite_if_newer(true)
     .overwrite_if_size_differs(true)
     .run()
-    .unwrap();
+    .context("Copying busybox_overlay")?;
 
     println!("Copying htop");
-    util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop")).unwrap();
+    util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop"))
+        .context("Copying htop")?;
 
     println!("Copying terminfo");
     util::mkdir(crate::rootfs_dir().join("etc")).unwrap();
@@ -101,45 +101,43 @@ pub fn main(_args: BuildArgs) {
         .overwrite_if_newer(true)
         .overwrite_if_size_differs(true)
         .run()
-        .unwrap();
+        .context("Copying terminfo for htop")?;
 
-    println!("Copying init");
     util::copy_file(
         crate::target_dir().join("x86_64-foxieos-linux-musl/debug/init"),
         crate::rootfs_dir().join("init"),
     )
-    .unwrap();
+    .context("Copying init")?;
     util::copy_file(
         crate::target_dir().join("x86_64-foxieos-linux-musl/debug/system_server"),
         crate::rootfs_dir().join("system/bin/system_server"),
     )
-    .unwrap();
+    .context("Copying system_server")?;
     util::copy_file(
         crate::target_dir().join("x86_64-foxieos-linux-musl/debug/tty_spawner"),
         crate::rootfs_dir().join("system/bin/tty_spawner"),
     )
-    .unwrap();
+    .context("Copying tty_spawner")?;
     util::copy_file(
         crate::target_dir().join("x86_64-foxieos-linux-musl/debug/initctl"),
         crate::rootfs_dir().join("system/bin/initctl"),
     )
-    .unwrap();
+    .context("Copying initctl")?;
     util::copy_file(
         crate::target_dir().join("x86_64-foxieos-linux-musl/debug/sandbox_helper"),
         crate::rootfs_dir().join("system/bin/sandbox_helper"),
     )
-    .unwrap();
+    .context("Copying sandbox_helper")?;
 
-    println!("Generating EROFS");
-    let status = Command::new("mkfs.erofs")
+    Command::new("mkfs.erofs")
         .arg("--all-root")
         .arg(crate::rootfs_image_file())
         .arg(crate::rootfs_dir().to_str().unwrap())
         .env("RUSTFLAGS", "-C relocation-model=static")
         .status()
-        .expect("Failed to execute mkfs.erofs");
+        .context("Waiting for mkfs.erofs result")?
+        .exit_ok()
+        .context("Executing mkfs.erofs")?;
 
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+    Ok(())
 }
