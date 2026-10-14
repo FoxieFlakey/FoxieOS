@@ -6,7 +6,7 @@ use std::{
     path::Path,
     process::Command,
     sync::LazyLock,
-    thread,
+    thread::{self, sleep},
     time::{Duration, Instant},
 };
 
@@ -15,9 +15,10 @@ use nix::{
     mount::{MsFlags, mount},
     sys::{
         reboot::{RebootMode, reboot},
+        signal::{Signal, kill},
         wait::{WaitStatus, waitpid},
     },
-    unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout},
+    unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout, sync},
 };
 use parking_lot::{Condvar, Mutex};
 
@@ -118,6 +119,11 @@ fn main() -> anyhow::Result<Infallible> {
 fn do_shutdown() -> ! {
     println!("init: going to shutdown, bye bye! System server exited normally");
 
+    // NOTE: Make this less fragile?
+    // Kill everything except init
+    kill(Pid::from_raw(-1), Signal::SIGKILL).expect("Cannot kill all processes when shutting down");
+    sync();
+    sleep(Duration::from_secs(1));
     reboot(RebootMode::RB_POWER_OFF).expect("Cannot perform shutdown");
     panic!("Isnt shutting down!");
 }
