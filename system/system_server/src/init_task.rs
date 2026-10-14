@@ -1,5 +1,9 @@
-use std::sync::{Arc, OnceLock, Weak};
+use std::{
+    sync::{Arc, OnceLock, Weak},
+    time::Duration,
+};
 
+use anyhow::Context;
 use foxie_base::{
     IObject,
     init::{IInit, ShutdownError, iinit},
@@ -10,7 +14,13 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
+use nix::{sys::signal::Signal, unistd::Uid};
 use parking_lot::{Condvar, Mutex};
+
+use crate::{
+    process_services::{self, Request},
+    sandbox_profiles,
+};
 
 pub static INIT: OnceLock<Arc<B<dyn IInit>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
@@ -22,6 +32,30 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     })))
     .ok()
     .unwrap();
+
+    // Starting the process service manager (not binder)
+    process_services::start_watcher().context("Cannot start process service manager")?;
+    process_services::send_request(Request::AddService(process_services::Config {
+        name: "shell".to_string(),
+        binary: "/system/bin/tty_spawner".into(),
+        arg0: None,
+        argv: vec![
+            "--binary".to_string(),
+            "/system/busybox_bins/sh".to_string(),
+            "--tty-dev".to_string(),
+            "/dev/hvc1".to_string(),
+        ],
+        uid: Uid::from_raw(0),
+        sandbox_profile: Some(sandbox_profiles::unconfined_profile),
+        retry_delay: Duration::from_secs(0),
+        retry_count: 5,
+        retry_window: Duration::from_mins(2),
+        graceful_signal: Signal::SIGTERM,
+        graceful_delay: Duration::from_secs(5),
+    }))
+    .context("Cannot add shell service")?;
+    process_services::send_request(Request::Start("shell".to_string()))
+        .context("Cannot start shell service")?;
 
     Ok(())
 }

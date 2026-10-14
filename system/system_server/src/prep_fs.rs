@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs::{self, File},
+    path::Path,
+};
 
 use anyhow::Context;
 use nix::{
@@ -64,6 +67,28 @@ pub fn run() -> anyhow::Result<()> {
         FchmodatFlags::NoFollowSymlink,
     )
     .context("Cannot chmod binder file")?;
+
+    File::create_new("/dev/binder").context("Cannot create empty file at /dev/binder")?;
+
+    mount(
+        Some("/dev/binderfs/binder"),
+        "/dev/binder",
+        None::<&Path>,
+        MsFlags::MS_BIND,
+        None::<&Path>,
+    )
+    .context("Mount binding primary binder")?;
+
+    // for mnt in ["/dev", "/sys", "/proc"] {
+    //     mount(
+    //         None::<&Path>,
+    //         mnt,
+    //         None::<&Path>,
+    //         MsFlags::MS_SHARED,
+    //         None::<&Path>,
+    //     )
+    //     .with_context(|| format!("Making {mnt} shareable"))?;
+    // }
 
     root_dev::discover_root().context("Cannot find root device")?;
     Ok(())

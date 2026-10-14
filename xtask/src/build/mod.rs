@@ -25,6 +25,7 @@ static DIRS: &[&str] = &[
     "app",
     "app_data",
     "sandbox_root",
+    "orig_root",
     "etc",
     "system",
     "tmp",

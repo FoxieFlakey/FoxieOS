@@ -5,7 +5,7 @@ pub mod impls;
 pub mod init;
 pub mod service_manager;
 
-pub static MAIN_BINDER_PATH: &str = "/dev/binderfs/binder";
+pub static MAIN_BINDER_PATH: &str = "/dev/binder";
 
 #[binder_ipc_object(root = true, interface_id = "foxie.IObject")]
 pub trait IObject: ObjectTrait {

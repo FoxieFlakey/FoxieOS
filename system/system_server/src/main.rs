@@ -1,3 +1,6 @@
+#![feature(linux_pidfd)]
+#![feature(oneshot_channel)]
+
 use std::process::Command;
 
 use anyhow::Context;
@@ -6,8 +9,8 @@ use nix::sys::reboot::{RebootMode, reboot};
 mod constants;
 mod init_task;
 mod prep_fs;
+mod process_services;
 mod root_dev;
-// NOTE: Currently the sandbox is unused
 #[allow(unused)]
 mod sandbox_profiles;
 #[allow(unused)]

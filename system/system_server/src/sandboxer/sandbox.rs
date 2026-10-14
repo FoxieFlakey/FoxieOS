@@ -1,6 +1,11 @@
 use std::{
+    ffi::OsStr,
     io::Write,
-    os::fd::{AsFd, AsRawFd, OwnedFd},
+    os::{
+        fd::{AsFd, AsRawFd, OwnedFd},
+        linux::process::CommandExt,
+    },
+    path::PathBuf,
     process::{Child, Command},
 };
 
@@ -23,10 +28,11 @@ pub struct Sandbox {
     pub(super) inner: Option<Inner>,
 }
 
-pub struct SpawnArgs {
-    pub path: String,
-    pub argv: Vec<String>,
-    pub arg0: Option<String>,
+pub struct SpawnArgs<'a, Path: AsRef<OsStr>, ArgV: AsRef<OsStr>, Arg0: AsRef<OsStr>> {
+    pub path: &'a Path,
+    pub argv: &'a [ArgV],
+    pub arg0: Option<&'a Arg0>,
+    pub create_pidfd: bool,
 }
 
 impl Sandbox {
@@ -50,7 +56,15 @@ impl Sandbox {
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
-    pub fn spawn(&self, args: &SpawnArgs) -> anyhow::Result<Child> {
+    pub fn spawn<Path, ArgV, Arg0>(
+        &self,
+        args: &SpawnArgs<'_, Path, ArgV, Arg0>,
+    ) -> anyhow::Result<Child>
+    where
+        Path: AsRef<OsStr>,
+        ArgV: AsRef<OsStr>,
+        Arg0: AsRef<OsStr>,
+    {
         let procs_fd = self
             .get_inner()
             .cgroup
@@ -83,9 +97,10 @@ impl Sandbox {
             helper.arg(arg0);
         }
         helper.arg("--");
-        helper.args(&args.argv);
+        helper.args(args.argv);
 
         helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
+        helper.create_pidfd(args.create_pidfd);
 
         Ok(helper
             .spawn()

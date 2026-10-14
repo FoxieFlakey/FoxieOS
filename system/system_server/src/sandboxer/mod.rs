@@ -15,7 +15,7 @@ use std::{
 use anyhow::Context;
 use nix::{
     fcntl::{OFlag, open},
-    mount::{MsFlags, mount},
+    mount::{MntFlags, MsFlags, mount, umount2},
     sched::{CloneFlags, setns, unshare},
     sys::stat::Mode,
     unistd::{Uid, chroot, fchdir},
@@ -93,7 +93,7 @@ where
     F: FnOnce(Uid) -> anyhow::Result<()>,
 {
     let orig_namespace = open(
-        "/proc/self/ns/mnt",
+        "/proc/thread-self/ns/mnt",
         OFlag::O_CLOEXEC | OFlag::O_RDONLY,
         Mode::empty(),
     )
@@ -122,7 +122,7 @@ where
     };
 
     let sandboxed_mnt_namespace = open(
-        "/proc/self/ns/mnt",
+        "/proc/thread-self/ns/mnt",
         OFlag::O_CLOEXEC | OFlag::O_RDONLY,
         Mode::empty(),
     )
@@ -142,6 +142,16 @@ where
     )
     .inspect_err(|_| unsandbox(false))
     .context("Cannot mount sandbox root")?;
+
+    mount(
+        Some("/"),
+        "/sandbox_root/orig_root",
+        None::<&Path>,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None::<&Path>,
+    )
+    .inspect_err(|_| unsandbox(false))
+    .context("Cannot mount bind original root")?;
 
     let sandbox_root_fs = open(
         "/sandbox_root",
@@ -165,6 +175,14 @@ where
     (config.prep)(config.uid)
         .context("Cannot run sandbox preperation function")
         .inspect_err(|_| unsandbox(true))?;
+
+    // Unmount original root, to prevent it leaking out
+    umount2(
+        "/orig_root",
+        MntFlags::UMOUNT_NOFOLLOW | MntFlags::MNT_DETACH,
+    )
+    .context("Cannot unmount original root")
+    .inspect_err(|_| unsandbox(true))?;
 
     // Then restore back the original.
     unsandbox(true);
