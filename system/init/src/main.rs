@@ -13,7 +13,10 @@ use std::{
 use anyhow::{Context, bail};
 use nix::{
     mount::{MsFlags, mount},
-    sys::wait::{WaitStatus, waitpid},
+    sys::{
+        reboot::{RebootMode, reboot},
+        wait::{WaitStatus, waitpid},
+    },
     unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout},
 };
 use parking_lot::{Condvar, Mutex};
@@ -85,7 +88,12 @@ fn main() -> anyhow::Result<Infallible> {
             WaitStatus::Exited(pid, code) => {
                 println!("init: (repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
-                    bail!("System server must not exit at all. It exited with code {code}");
+                    if code == 0 {
+                        // System server exited normally, it meean it requests shutdown
+                        do_shutdown();
+                    } else {
+                        bail!("System server must not exit at all. It exited with code {code}");
+                    }
                 }
 
                 check_shell(pid, code != 0);
@@ -105,6 +113,13 @@ fn main() -> anyhow::Result<Infallible> {
             | WaitStatus::StillAlive => continue,
         };
     }
+}
+
+fn do_shutdown() -> ! {
+    println!("init: going to shutdown, bye bye! System server exited normally");
+
+    reboot(RebootMode::RB_POWER_OFF).expect("Cannot perform shutdown");
+    panic!("Isnt shutting down!");
 }
 
 static SHELLS: LazyLock<Mutex<Box<[ShellState]>>> =

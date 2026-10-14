@@ -4,7 +4,6 @@
 use std::process::Command;
 
 use anyhow::Context;
-use nix::sys::reboot::{RebootMode, reboot};
 
 mod constants;
 mod init_task;
@@ -33,9 +32,6 @@ fn do_main() -> anyhow::Result<()> {
         init_task::DO_SHUTDOWN_COND.wait_while(&mut init_task::DO_SHUTDOWN.lock(), |x| *x != true);
         Ok(())
     })?;
-    println!("init: going to shutdown, bye bye!");
-
-    reboot(RebootMode::RB_POWER_OFF).context("Cannot perform shutdown")?;
     Ok(())
 }
 

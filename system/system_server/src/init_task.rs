@@ -99,7 +99,7 @@ impl IInit for Init {
     }
 
     fn request_shutdown(&self) -> anyhow::Result<Result<(), Serde<ShutdownError>>> {
-        println!("init: Shutdown requested!");
+        println!("system_server: Shutdown requested!");
         *DO_SHUTDOWN.lock() = true;
         DO_SHUTDOWN_COND.notify_all();
         Ok(Ok(()))
