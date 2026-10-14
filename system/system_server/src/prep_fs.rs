@@ -78,18 +78,6 @@ pub fn run() -> anyhow::Result<()> {
         None::<&Path>,
     )
     .context("Mount binding primary binder")?;
-
-    // for mnt in ["/dev", "/sys", "/proc"] {
-    //     mount(
-    //         None::<&Path>,
-    //         mnt,
-    //         None::<&Path>,
-    //         MsFlags::MS_SHARED,
-    //         None::<&Path>,
-    //     )
-    //     .with_context(|| format!("Making {mnt} shareable"))?;
-    // }
-
     root_dev::discover_root().context("Cannot find root device")?;
     Ok(())
 }
