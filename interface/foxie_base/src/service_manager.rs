@@ -4,7 +4,7 @@ use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::{binder_ipc_object, packetable::Serde};
 use serde::{Deserialize, Serialize};
 
-use crate::{IObject, IToken, init::IInit, iobject};
+use crate::{IObject, IToken, iobject, system_server::ISystemServer};
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]
 pub enum GetInitError {
@@ -31,7 +31,9 @@ pub trait IServiceManager: IObject {
         service: Arc<B<dyn IService>>,
     ) -> anyhow::Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>>;
     fn get_service(&self, name: &str) -> anyhow::Result<Option<Arc<B<dyn IService>>>>;
-    fn get_init(&self) -> anyhow::Result<Result<Arc<B<dyn IInit>>, Serde<GetInitError>>>;
+    fn get_system_server(
+        &self,
+    ) -> anyhow::Result<Result<Arc<B<dyn ISystemServer>>, Serde<GetInitError>>>;
 }
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]

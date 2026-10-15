@@ -5,9 +5,8 @@ use std::{
 
 use anyhow::Context;
 use foxie_base::{
-    IObject,
-    init::{IInit, ShutdownError, iinit},
-    iobject,
+    IObject, iobject,
+    system_server::{ISystemServer, ShutdownError, isystemserver},
 };
 use libbinder::{
     Runtime,
@@ -22,7 +21,7 @@ use crate::{
     sandbox_profiles,
 };
 
-pub static INIT: OnceLock<Arc<B<dyn IInit>>> = OnceLock::new();
+pub static INIT: OnceLock<Arc<B<dyn ISystemServer>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
 pub static DO_SHUTDOWN_COND: Condvar = Condvar::new();
 
@@ -79,7 +78,7 @@ impl ObjectTrait for Init {
         flags: enumflags2::BitFlags<libbinder::object::Flag>,
         message: &mut libbinder::packet::Packet,
     ) -> Result<Option<(u32, libbinder::packet::Packet)>, libbinder::object::TransactionError> {
-        <dyn IInit>::decode_and_dispatch(self, code, flags, message)
+        <dyn ISystemServer>::decode_and_dispatch(self, code, flags, message)
     }
 }
 
@@ -87,13 +86,13 @@ impl IObject for Init {
     fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
         match name {
             iobject::ID => Ok(true),
-            iinit::ID => Ok(true),
+            isystemserver::ID => Ok(true),
             _ => Ok(false),
         }
     }
 }
 
-impl IInit for Init {
+impl ISystemServer for Init {
     fn ping(&self) -> anyhow::Result<Serde<String>> {
         Ok(Serde("Hiiii from init >w> i am alive!".to_string()))
     }

@@ -10,8 +10,8 @@ pub enum ShutdownError {
     PermissionDenied,
 }
 
-#[binder_ipc_object(interface_id = "foxie.IInit")]
-pub trait IInit: IObject {
+#[binder_ipc_object(interface_id = "foxie.ISystemServer")]
+pub trait ISystemServer: IObject {
     fn request_shutdown(&self) -> anyhow::Result<Result<(), Serde<ShutdownError>>>;
     fn ping(&self) -> anyhow::Result<Serde<String>>;
 }

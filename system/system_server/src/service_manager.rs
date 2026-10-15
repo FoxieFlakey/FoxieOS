@@ -7,9 +7,9 @@ use anyhow::Context;
 use foxie_base::{
     IObject, IToken,
     impls::Token,
-    init::IInit,
     iobject,
     service_manager::{GetInitError, IService, IServiceManager, RegisterError, iservicemanager},
+    system_server::ISystemServer,
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
@@ -135,7 +135,9 @@ impl IServiceManager for ServiceManager {
         }
     }
 
-    fn get_init(&self) -> anyhow::Result<Result<Arc<B<dyn IInit>>, Serde<GetInitError>>> {
+    fn get_system_server(
+        &self,
+    ) -> anyhow::Result<Result<Arc<B<dyn ISystemServer>>, Serde<GetInitError>>> {
         if let Some(init) = init_task::INIT.get() {
             Ok(Ok(init.clone()))
         } else {

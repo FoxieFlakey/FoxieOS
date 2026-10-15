@@ -2,8 +2,8 @@ use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::binder_ipc_object;
 
 pub mod impls;
-pub mod init;
 pub mod service_manager;
+pub mod system_server;
 
 pub static MAIN_BINDER_PATH: &str = "/dev/binder";
 
