@@ -15,13 +15,13 @@ impl private::Sealed for PidFd {}
 impl PidFdExtFoxie for PidFd {
     fn get_termination_reason(&self) -> Result<WaitStatus, Errno> {
         let mut info: libc::pidfd_info = unsafe { std::mem::zeroed() };
-        info.mask = libc::PIDFD_INFO_EXIT.into();
+        info.mask = libc::__u64::from(libc::PIDFD_INFO_EXIT | libc::PIDFD_INFO_PID);
 
         if unsafe { libc::ioctl(self.as_raw_fd(), libc::PIDFD_GET_INFO, &mut info) } < 0 {
             return Err(Errno::last());
         }
 
-        if info.mask & libc::__u64::from(libc::PIDFD_INFO_EXIT) == 0 {
+        if info.mask & libc::__u64::from(libc::PIDFD_INFO_EXIT | libc::PIDFD_INFO_PID) == 0 {
             return Err(Errno::EINVAL);
         }
 
