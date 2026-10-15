@@ -1,7 +1,7 @@
 use std::{
     convert::Infallible,
     env,
-    fs::OpenOptions,
+    fs::{self, File, OpenOptions},
     os::fd::AsFd,
     path::Path,
     process::Command,
@@ -12,10 +12,12 @@ use std::{
 
 use anyhow::{Context, bail};
 use nix::{
+    fcntl::AT_FDCWD,
     mount::{MsFlags, mount},
     sys::{
         reboot::{RebootMode, reboot},
         signal::{Signal, kill},
+        stat::{FchmodatFlags, Mode, fchmodat},
         wait::{WaitStatus, waitpid},
     },
     unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout, sync},
@@ -27,14 +29,7 @@ fn main() -> anyhow::Result<Infallible> {
         bail!("Must run as PID 1");
     }
 
-    mount(
-        None::<&Path>,
-        "/dev",
-        Some("devtmpfs"),
-        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
-        None::<&Path>,
-    )
-    .context("Mounthing /dev")?;
+    prep_fs().context("Cannot prepare fs")?;
 
     // Replace stdio with one from /dev/ttyprintk
     let tty = OpenOptions::new()
@@ -216,4 +211,82 @@ impl ShellState {
                 .context("Cannot convert u32 to i32 for PID")?,
         ))
     }
+}
+
+fn prep_fs() -> anyhow::Result<()> {
+    let flags = MsFlags::MS_NOATIME
+        | MsFlags::MS_NODIRATIME
+        | MsFlags::MS_NODEV
+        | MsFlags::MS_NOEXEC
+        | MsFlags::MS_NOSUID;
+    mount(
+        None::<&Path>,
+        "/tmp",
+        Some("tmpfs"),
+        flags,
+        Some("size=32M"),
+    )
+    .context("Mounting init's /tmp")?;
+    mount(
+        None::<&Path>,
+        "/mnt",
+        Some("tmpfs"),
+        flags,
+        Some("size=32M"),
+    )
+    .context("Mounting /mnt tmpfs")?;
+
+    // NOTE: devtmpfs is mounted by init, we dont need to do anything here
+
+    mount(None::<&Path>, "/proc", Some("proc"), flags, None::<&Path>).context("Mounthing /proc")?;
+    mount(None::<&Path>, "/sys", Some("sysfs"), flags, None::<&Path>).context("Mounthing /sys")?;
+    mount(
+        None::<&Path>,
+        "/sys/fs/cgroup",
+        Some("cgroup2"),
+        flags,
+        None::<&Path>,
+    )
+    .context("Mounthing /sys/fs/cgroup")?;
+
+    mount(
+        None::<&Path>,
+        "/dev",
+        Some("devtmpfs"),
+        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
+        None::<&Path>,
+    )
+    .context("Mounthing /dev")?;
+
+    fs::create_dir_all("/dev/binderfs").context("Creating binderfs")?;
+
+    mount(
+        None::<&Path>,
+        "/dev/binderfs",
+        Some("binder"),
+        // The files under binderfs is inherently special device
+        flags & !MsFlags::MS_NODEV,
+        Some("stats=global"),
+    )
+    .context("Mounting /dev/binderfs")?;
+
+    fchmodat(
+        AT_FDCWD,
+        "/dev/binderfs/binder",
+        Mode::from_bits_retain(0o666),
+        FchmodatFlags::NoFollowSymlink,
+    )
+    .context("Cannot chmod binder file")?;
+
+    File::create_new("/dev/binder").context("Cannot create empty file at /dev/binder")?;
+
+    mount(
+        Some("/dev/binderfs/binder"),
+        "/dev/binder",
+        None::<&Path>,
+        MsFlags::MS_BIND,
+        None::<&Path>,
+    )
+    .context("Mount binding primary binder")?;
+    Ok(())
 }

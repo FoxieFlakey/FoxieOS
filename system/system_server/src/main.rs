@@ -7,7 +7,6 @@ use anyhow::Context;
 
 mod constants;
 mod init_task;
-mod prep_fs;
 mod process_services;
 mod root_dev;
 #[allow(unused)]
@@ -17,7 +16,7 @@ mod sandboxer;
 mod service_manager;
 
 fn do_main() -> anyhow::Result<()> {
-    prep_fs::run().context("Preparing rootfs")?;
+    root_dev::discover_root().context("Cannot find root device")?;
 
     println!("Root device was found at {}", root_dev::get_root_dev());
     println!("Basic preboot rootfs is ready");
