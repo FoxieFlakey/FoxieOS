@@ -1,12 +1,12 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs,
-    os::fd::AsFd,
+    os::{fd::AsFd, linux::process::PidFd},
     path::Path,
     sync::{
-        OnceLock, Weak,
+        LazyLock, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, RecvTimeoutError},
+        mpsc::{self, RecvTimeoutError, TryRecvError},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -16,8 +16,13 @@ use anyhow::Context;
 use nix::{
     fcntl::{OFlag, open},
     mount::{MntFlags, MsFlags, mount, umount2},
+    poll::{PollFd, PollFlags, PollTimeout, poll},
     sched::{CloneFlags, setns, unshare},
-    sys::stat::Mode,
+    sys::{
+        epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
+        eventfd::{EfdFlags, EventFd},
+        stat::Mode,
+    },
     unistd::{Uid, chroot, fchdir},
 };
 use openat::Dir;
@@ -49,9 +54,18 @@ static SANDBOX_DESTROYING_QUEUE: RwLock<Option<mpsc::Sender<sandbox::Inner>>> = 
 
 static BACKGROUND_THRD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
+static REAPER_THRD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+static REAPER_QUEUE: RwLock<Option<mpsc::Sender<PidFd>>> = RwLock::new(None);
+static REAPER_WAKE: LazyLock<EventFd> =
+    LazyLock::new(|| EventFd::from_value_and_flags(0, EfdFlags::EFD_CLOEXEC).unwrap());
+
 pub fn shutdown() {
     drop(SANDBOX_DESTROYING_QUEUE.write().take());
     BACKGROUND_THRD.lock().take().unwrap().join().unwrap();
+
+    drop(REAPER_QUEUE.write().take());
+    REAPER_WAKE.write(1).expect("Cannot wake reaper");
+    REAPER_THRD.lock().take().unwrap().join().unwrap();
 }
 
 pub fn init() -> anyhow::Result<()> {
@@ -59,6 +73,66 @@ pub fn init() -> anyhow::Result<()> {
     SANDBOX_DIR
         .set(Dir::open(SANDBOXER_CGROUP_DIR).context("Cannot open cgroup dir")?)
         .expect("Should not be initialized already");
+
+    let (sender, receiver) = mpsc::channel::<PidFd>();
+    let reaper = thread::spawn(move || {
+        let mut watched: HashMap<u64, PidFd> = HashMap::new();
+        let mut id = 0;
+
+        let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC).expect("Cannot create epoll");
+        'looper: loop {
+            let mut pollfds = [
+                PollFd::new(epoll.0.as_fd(), PollFlags::POLLIN),
+                PollFd::new(REAPER_WAKE.as_fd(), PollFlags::POLLIN),
+            ];
+
+            poll(&mut pollfds, PollTimeout::NONE).expect("Cannot poll");
+
+            if !pollfds[0].revents().unwrap().is_empty() {
+                let mut events = [EpollEvent::empty(); 100];
+                let count = epoll
+                    .wait(&mut events, None::<PollTimeout>)
+                    .expect("Cannot epoll on pifds");
+
+                for event in &events[0..count] {
+                    // Do reap
+                    let pidfd = watched
+                        .remove(&event.data())
+                        .expect("There should be pidfd here");
+                    epoll
+                        .delete(pidfd.as_fd())
+                        .expect("Cannot remove pidfd from epoll");
+                    pidfd.wait().expect("Cannot reap process");
+                }
+            }
+
+            // There request incoming
+            if !pollfds[1].revents().unwrap().is_empty() {
+                loop {
+                    match receiver.try_recv() {
+                        Ok(x) => {
+                            epoll
+                                .add(x.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, id))
+                                .expect("Cannot add new pidfd to be watched");
+
+                            // New PID to watch for
+                            watched.insert(id, x);
+                            id += 1;
+                        }
+                        Err(TryRecvError::Disconnected) => {
+                            // There is shutdown requested
+                            break 'looper;
+                        }
+                        Err(TryRecvError::Empty) => {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    *REAPER_THRD.lock() = Some(reaper);
+    *REAPER_QUEUE.write() = Some(sender);
 
     let (sender, receiver) = mpsc::channel();
 

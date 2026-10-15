@@ -1,8 +1,8 @@
 use std::{
     io::Write,
     os::{
-        fd::{AsFd, AsRawFd, OwnedFd},
-        linux::process::{ChildExt, CommandExt},
+        fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd},
+        linux::process::{ChildExt, CommandExt, PidFd},
     },
     process::Command,
     sync::Weak,
@@ -18,7 +18,7 @@ use foxie_base::{
 };
 use libbinder::object::ObjectTrait;
 use libbinder_basic::packetable::Serde;
-use nix::unistd::{Uid, sleep};
+use nix::unistd::{Uid, dup, sleep};
 use openat::Dir;
 
 use crate::{constants::SANDBOXER_HELPER_PATH, sandboxer::SANDBOX_ID_FREE};
@@ -88,13 +88,29 @@ impl Sandbox {
         helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
         helper.create_pidfd(true);
 
-        Ok(helper
+        let pidfd = helper
             .spawn()
             .context("Cannot spawn sandboxed process thru helper binary")?
             .into_pidfd()
             .ok()
-            .expect("Already requested for pidfd...")
-            .into())
+            .expect("Already requested for pidfd...");
+
+        // We create second PidFd instance to be used by reaper
+        let duped = dup(pidfd.as_fd()).context("Cannot dup pidfd")?;
+
+        // SAFETY: This is valid fd, we just dup'ed it
+        let duped_pidfd = unsafe { PidFd::from_raw_fd(duped.into_raw_fd()) };
+        super::REAPER_QUEUE
+            .read()
+            .as_ref()
+            .unwrap()
+            .send(duped_pidfd)
+            .expect("Cannot send pidfd to sandboxer's reaper to be watched");
+        super::REAPER_WAKE
+            .write(1)
+            .expect("Cannot wake up sandboxer's reaper");
+
+        Ok(pidfd.into())
     }
 }
 
