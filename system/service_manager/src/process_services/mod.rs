@@ -5,17 +5,16 @@
 use std::{
     cmp,
     collections::HashMap,
-    os::{
-        fd::{AsFd, FromRawFd, IntoRawFd},
-        linux::process::ChildExt,
-    },
-    path::PathBuf,
-    sync::{LazyLock, OnceLock, mpsc, oneshot},
+    os::fd::{AsFd, FromRawFd, IntoRawFd},
+    sync::{Arc, LazyLock, OnceLock, mpsc, oneshot},
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, bail};
+use foxie_base::sandboxer::{ISandbox, SpawnArgs};
+use libbinder::object::B;
+use libbinder_basic::packetable::Serde;
 use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll, ppoll},
     sys::{
@@ -31,14 +30,11 @@ use nix::{
 
 use pidfd_util::{PidFd, PidFdExt};
 
-use crate::sandboxer::{
-    self,
-    sandbox::{self, Sandbox},
-};
+use crate::pidfd::PidFdExtFoxie;
 
 struct Service {
     id: u64,
-    sandbox: Sandbox,
+    sandbox: Arc<B<dyn ISandbox>>,
     main_pid: Option<PidFd>,
     config: Config,
     state: State,
@@ -63,17 +59,16 @@ impl Service {
 
         let pid = self
             .sandbox
-            .spawn(&sandbox::SpawnArgs {
-                path: &self.config.binary,
-                argv: &self.config.argv,
-                arg0: self.config.arg0.as_ref(),
-                create_pidfd: true,
-            })
-            .context("Cannot spawn service into sandbox")?
-            .into_pidfd()
-            .expect("pidfd is required for system_service to be functional");
+            .spawn(Serde(SpawnArgs {
+                path: self.config.binary.clone(),
+                argv: self.config.argv.clone(),
+                arg0: self.config.arg0.clone(),
+            }))
+            .context("Cannot send transaction to sandboxer for spawning")?
+            .context("Cannot spawn service into sandbox")?;
+
         // SAFETY: We just got it from std's PidFd
-        self.main_pid = Some(unsafe { PidFd::from_raw_fd(pid.into_raw_fd()) });
+        self.main_pid = Some(unsafe { PidFd::from_raw_fd(pid.into_inner().into_raw_fd()) });
         self.state = State::Started;
         Ok(())
     }
@@ -132,7 +127,9 @@ impl Service {
 
         // Either if service exited properly or graceful passed
         // kill everything in service sandbox.
-        self.sandbox.kill_all();
+        self.sandbox
+            .kill_all()
+            .context("Cannot send request to kill sandbox")?;
 
         match waitid(Id::PIDFd(pid.as_fd()), WaitPidFlag::WEXITED) {
             Ok(WaitStatus::Signaled(pid, signal, ..)) => {
@@ -158,13 +155,12 @@ impl Service {
 
 pub struct Config {
     pub name: String,
-    pub binary: PathBuf,
+    pub binary: String,
     pub arg0: Option<String>,
     pub argv: Vec<String>,
     pub uid: Uid,
 
-    // Or None if no sandboxing
-    pub sandbox_profile: Option<fn(Uid) -> anyhow::Result<()>>,
+    pub sandbox_profile: foxie_base::sandboxer::Profile,
 
     // What is delay between respawning
     pub retry_delay: Duration,
@@ -241,10 +237,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                     .expect("Cannot epoll on pifds");
 
                 for event in &events[0..count] {
-                    if event
-                        .events()
-                        .intersects(EpollFlags::EPOLLIN | EpollFlags::EPOLLHUP)
-                    {
+                    if event.events().intersects(EpollFlags::EPOLLHUP) {
                         // A service is dead, lets remove its pidfd from epoll and figure why its dead
                         let name = epoll_data_to_name_mapper
                             .get(&event.data())
@@ -258,7 +251,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             .take()
                             .expect("Service must have already its pidfd present");
 
-                        match waitid(Id::PIDFd(pid.as_fd()), WaitPidFlag::WEXITED) {
+                        match pid.get_termination_reason() {
                             Ok(WaitStatus::Signaled(pid, signal, ..)) => {
                                 println!(
                                     "service_manager: Service '{name}' (pid {pid}) killed with {signal} retrying in {} secs",
@@ -347,10 +340,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                         epoll
                             .add(
                                 service.main_pid.as_ref().unwrap().as_fd(),
-                                EpollEvent::new(
-                                    EpollFlags::EPOLLIN | EpollFlags::EPOLLHUP,
-                                    service.id,
-                                ),
+                                EpollEvent::new(EpollFlags::EPOLLHUP, service.id),
                             )
                             .expect("Cannot add respawned service to epoll watch list");
                     }
@@ -426,11 +416,13 @@ pub fn start_watcher() -> anyhow::Result<()> {
                                 Duration::from_mins(5),
                             );
 
-                            let sandbox = Sandbox::new(sandboxer::Config {
-                                prep: config.sandbox_profile.unwrap_or(|_| Ok(())),
-                                uid: config.uid,
-                            })
-                            .context("Cannot create sandbox")?;
+                            let sandbox = crate::constants::get_sandboxer()
+                                .create_sandbox(Serde(foxie_base::sandboxer::Config {
+                                    uid: config.uid.as_raw(),
+                                    profile: config.sandbox_profile,
+                                }))
+                                .context("Cannot call to sandboxer service")?
+                                .context("Cannot create sandbox")?;
 
                             let id = service_id_for_epoll_data;
                             let name = config.name.clone();

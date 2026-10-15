@@ -1,10 +1,17 @@
-use std::sync::Arc;
+use std::sync::{Arc, oneshot};
 
-use libbinder::object::{B, ObjectTrait};
-use libbinder_basic::{binder_ipc_object, packetable::Serde};
+use anyhow::Context;
+use libbinder::{
+    object::{B, ObjectTrait},
+    proxy::Proxy,
+};
+use libbinder_basic::{TryFromProxy, binder_ipc_object, packetable::Serde};
 use serde::{Deserialize, Serialize};
 
-use crate::{IObject, IToken, iobject};
+use crate::{
+    IObject, IToken, iobject,
+    util::{FnOnceObject, IFnOnce},
+};
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]
 pub enum GetServiceManagerCtlError {
@@ -22,6 +29,14 @@ pub enum RegisterError {
     PermissionDenied,
 }
 
+#[derive(Serialize, Deserialize, thiserror::Error, Debug)]
+pub enum WaitServiceError {
+    #[error("Too many waits")]
+    TooManyWaits,
+    #[error("Permission dnied")]
+    PermissionDenied,
+}
+
 #[binder_ipc_object(interface_id = "foxie.IServiceManager")]
 pub trait IServiceManager: IObject {
     #[must_use = "Service would be automatically unregistred if token dropped"]
@@ -31,9 +46,53 @@ pub trait IServiceManager: IObject {
         service: Arc<B<dyn IService>>,
     ) -> anyhow::Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>>;
     fn get_service(&self, name: &str) -> anyhow::Result<Option<Arc<B<dyn IService>>>>;
+    fn wait_service(
+        &self,
+        name: &str,
+        callback: Arc<B<dyn IFnOnce>>,
+    ) -> anyhow::Result<Result<(), Serde<WaitServiceError>>>;
     fn get_ctl(
         &self,
     ) -> anyhow::Result<Result<Arc<B<dyn IServiceManagerCtl>>, Serde<GetServiceManagerCtlError>>>;
+}
+
+pub fn wait_and_get_service<T>(
+    manager: &dyn IServiceManager,
+    service: &str,
+) -> anyhow::Result<Result<anyhow::Result<Arc<B<T>>>, WaitServiceError>>
+where
+    T: TryFromProxy + ?Sized,
+{
+    loop {
+        let (sender, receiver) = oneshot::channel();
+        let ret = manager
+            .wait_service(
+                service,
+                FnOnceObject::new(Arc::downgrade(&manager.get_runtime()), || {
+                    // Dont really care if waiter is uninterested
+                    let _ = sender.send(());
+                }),
+            )
+            .context("Cannot send transacton for waiting")?
+            .map_err(|Serde(x)| x);
+        if let Err(e) = ret {
+            return Ok(Err(e));
+        }
+
+        receiver.recv().expect("The waker disappeared");
+
+        if let Some(service) = manager
+            .get_service(service)
+            .context("Cannot send transaction for getting service")?
+        {
+            let proxy = match service.get_remote() {
+                Some(x) => x.clone(),
+                None => Proxy::from_object(service),
+            };
+
+            return Ok(Ok(T::try_from_proxy(proxy).map_err(|e| e.into())));
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]

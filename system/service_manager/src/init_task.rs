@@ -1,12 +1,11 @@
 use std::{
-    process::{Child, Command},
     sync::{Arc, OnceLock, Weak},
     time::Duration,
 };
 
 use anyhow::Context;
 use foxie_base::{
-    IObject, iobject,
+    IObject, iobject, sandboxer,
     service_manager::{IServiceManagerCtl, ShutdownError, iservicemanagerctl},
 };
 use libbinder::{
@@ -17,16 +16,11 @@ use libbinder_basic::packetable::Serde;
 use nix::{sys::signal::Signal, unistd::Uid};
 use parking_lot::{Condvar, Mutex};
 
-use crate::{
-    process_services::{self, Request},
-    sandbox_profiles,
-};
+use crate::process_services::{self, Request};
 
 pub static INIT: OnceLock<Arc<B<dyn IServiceManagerCtl>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
 pub static DO_SHUTDOWN_COND: Condvar = Condvar::new();
-
-static SANDBOXER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     INIT.set(Arc::new(B::new(Init {
@@ -37,13 +31,6 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
 
     // Starting the process service manager (not binder)
     process_services::start_watcher().context("Cannot start process service manager")?;
-
-    // Spawn 2nd sandboxer for testing.
-    *SANDBOXER_CHILD.lock() = Some(
-        Command::new("/system/bin/sandboxer")
-            .spawn()
-            .context("Cannot spawn sandboxer service")?,
-    );
 
     process_services::send_request(Request::AddService(process_services::Config {
         name: "shell".to_string(),
@@ -56,7 +43,7 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
             "/dev/hvc1".to_string(),
         ],
         uid: Uid::from_raw(0),
-        sandbox_profile: Some(sandbox_profiles::unconfined_profile),
+        sandbox_profile: sandboxer::Profile::Unconfined,
         retry_delay: Duration::from_secs(0),
         retry_count: 5,
         retry_window: Duration::from_mins(2),

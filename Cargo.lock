@@ -303,6 +303,7 @@ dependencies = [
  "libbinder",
  "libbinder-basic",
  "nix",
+ "parking_lot",
  "serde",
  "thiserror",
 ]

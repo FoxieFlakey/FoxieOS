@@ -8,5 +8,6 @@ anyhow = "1.0.104"
 libbinder = { version = "0.1.0", path = "../../libs/libbinder/libbinder" }
 libbinder-basic = { version = "0.1.0", path = "../../libs/libbinder/extras/libbinder-basic", features = ["macros"] }
 nix = { version = "0.31.3", features = ["fs"] }
+parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"

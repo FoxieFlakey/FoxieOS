@@ -10,8 +10,9 @@ use foxie_base::{
     iobject,
     service_manager::{
         GetServiceManagerCtlError, IService, IServiceManager, IServiceManagerCtl, RegisterError,
-        iservicemanager,
+        WaitServiceError, iservicemanager,
     },
+    util::IFnOnce,
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
@@ -38,6 +39,7 @@ where
                     state: RwLock::new(State {
                         is_shutting_down: false,
                         services: HashMap::new(),
+                        watchers: HashMap::new(),
                     }),
                 })
             }))
@@ -66,6 +68,7 @@ where
 
 struct State {
     services: HashMap<String, Service>,
+    watchers: HashMap<String, Vec<Arc<B<dyn IFnOnce>>>>,
     is_shutting_down: bool,
 }
 
@@ -84,6 +87,7 @@ impl ServiceManager {
         let mut state = self.state.write();
         if state.services.contains_key(service) {
             state.services.remove(service);
+            state.watchers.remove(service);
             println!("service_manager: Service {service} unregistered");
         }
     }
@@ -114,6 +118,7 @@ impl IServiceManager for ServiceManager {
         }
 
         state.services.insert(name.to_string(), Service { service });
+        let waiters = state.watchers.remove(name);
         drop(state);
 
         let this = self.this.clone();
@@ -126,7 +131,37 @@ impl IServiceManager for ServiceManager {
         });
 
         println!("service_manager: Registered service '{}'", name);
+
+        // Wake up waiters
+        for waiter in waiters.iter().flatten() {
+            // Don't really care
+            let _ = waiter.call();
+        }
         Ok(Ok(token))
+    }
+
+    fn wait_service(
+        &self,
+        name: &str,
+        callback: Arc<B<dyn IFnOnce>>,
+    ) -> anyhow::Result<Result<(), Serde<foxie_base::service_manager::WaitServiceError>>> {
+        let mut state = self.state.write();
+        if state.is_shutting_down {
+            return Ok(Err(Serde(WaitServiceError::PermissionDenied)));
+        }
+
+        if state.services.contains_key(name) {
+            // Dont really care about result because this just best effort callback
+            let _ = callback.call();
+            return Ok(Ok(()));
+        }
+
+        state
+            .watchers
+            .entry(name.to_string())
+            .or_default()
+            .push(callback);
+        Ok(Ok(()))
     }
 
     fn get_service(&self, name: &str) -> anyhow::Result<Option<Arc<B<dyn IService>>>> {

@@ -4,9 +4,11 @@ use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::{binder_ipc_object, packetable::Serde};
 use serde::{Deserialize, Serialize};
 
-use crate::{IObject, common::SafePidFd, iobject};
+use crate::{
+    IObject, common::SafePidFd, iobject, service_manager::IService, service_manager::iservice,
+};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum Profile {
     Unconfined,
     App,
@@ -34,7 +36,7 @@ pub struct Config {
 }
 
 #[binder_ipc_object(interface_id = "foxie.ISandboxService")]
-pub trait ISandboxService: IObject {
+pub trait ISandboxService: IService {
     fn create_sandbox(
         &self,
         config: Serde<Config>,

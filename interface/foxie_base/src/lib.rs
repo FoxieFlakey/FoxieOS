@@ -1,4 +1,5 @@
 #![feature(linux_pidfd)]
+#![feature(oneshot_channel)]
 
 use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::binder_ipc_object;
@@ -8,6 +9,7 @@ pub mod impls;
 pub mod sandboxer;
 pub mod service_manager;
 pub mod uids;
+pub mod util;
 
 pub static MAIN_BINDER_PATH: &str = "/dev/binder";
 
