@@ -25,7 +25,7 @@ use nix::{
         timerfd::{ClockId, TimerFd, TimerFlags},
         wait::{Id, WaitPidFlag, WaitStatus, waitid},
     },
-    unistd::Uid,
+    unistd::{Pid, Uid},
 };
 
 use pidfd_util::{PidFd, PidFdExt};
@@ -35,7 +35,7 @@ use crate::pidfd::PidFdExtFoxie;
 struct Service {
     id: u64,
     sandbox: Arc<B<dyn ISandbox>>,
-    main_pid: Option<PidFd>,
+    main_pid: Option<(PidFd, Pid)>,
     config: Config,
     state: State,
 
@@ -57,7 +57,7 @@ impl Service {
             "Cannot spawn service that is curently running"
         );
 
-        let pid = self
+        let (pidfd, pid) = self
             .sandbox
             .spawn(Serde(SpawnArgs {
                 path: self.config.binary.clone(),
@@ -68,7 +68,10 @@ impl Service {
             .context("Cannot spawn service into sandbox")?;
 
         // SAFETY: We just got it from std's PidFd
-        self.main_pid = Some(unsafe { PidFd::from_raw_fd(pid.into_inner().into_raw_fd()) });
+        self.main_pid = Some((
+            unsafe { PidFd::from_raw_fd(pidfd.into_inner().into_raw_fd()) },
+            Pid::from_raw(pid),
+        ));
         self.state = State::Started;
         Ok(())
     }
@@ -79,17 +82,15 @@ impl Service {
             return Ok(None);
         }
 
-        let pid = self.main_pid.take().unwrap();
+        let (pidfd, pid) = self.main_pid.take().unwrap();
         let name = &self.config.name;
 
         // First try graceful kill
         let stop_time = Instant::now();
-        let pid_str = pid
-            .get_pid()
-            .map(|x| x.to_string())
-            .unwrap_or("<unknown>".to_string());
+        let pid_str = format!("{}", pid);
         println!("service_manager: Stopping service '{name}' (pid {pid_str})");
-        pid.send_signal(self.config.graceful_signal as i32)
+        pidfd
+            .send_signal(self.config.graceful_signal as i32)
             .with_context(|| {
                 format!(
                     "Cannot send graceful signal {} to {pid_str}",
@@ -98,7 +99,7 @@ impl Service {
             })?;
 
         // Wait either graceful wait delay passed or pidfd exited
-        let mut pollfds = [PollFd::new(pid.as_fd(), PollFlags::POLLIN)];
+        let mut pollfds = [PollFd::new(pidfd.as_fd(), PollFlags::POLLIN)];
 
         loop {
             let ret = ppoll(
@@ -131,7 +132,7 @@ impl Service {
             .kill_all()
             .context("Cannot send request to kill sandbox")?;
 
-        match waitid(Id::PIDFd(pid.as_fd()), WaitPidFlag::WEXITED) {
+        match waitid(Id::PIDFd(pidfd.as_fd()), WaitPidFlag::WEXITED) {
             Ok(WaitStatus::Signaled(pid, signal, ..)) => {
                 println!(
                     "service_manager: Service '{name}' (pid {pid}) killed with {signal} in {:3.2} secs",
@@ -149,7 +150,7 @@ impl Service {
                 panic!("Failed to wait on service pidfd: {}", e);
             }
         };
-        Ok(Some(pid))
+        Ok(Some(pidfd))
     }
 }
 
@@ -246,19 +247,19 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             .get_mut(name)
                             .expect("epoll cannot contain unknown fd?");
 
-                        let pid = service
+                        let (pidfd, pid) = service
                             .main_pid
                             .take()
                             .expect("Service must have already its pidfd present");
 
-                        match pid.get_termination_reason() {
-                            Ok(WaitStatus::Signaled(pid, signal, ..)) => {
+                        match pidfd.get_termination_reason() {
+                            Ok(WaitStatus::Signaled(_, signal, ..)) => {
                                 println!(
                                     "service_manager: Service '{name}' (pid {pid}) killed with {signal} retrying in {} secs",
                                     service.config.retry_delay.as_secs()
                                 );
                             }
-                            Ok(WaitStatus::Exited(pid, code)) => {
+                            Ok(WaitStatus::Exited(_, code)) => {
                                 println!(
                                     "service_manager: Service '{name}' (pid {pid}) exited with code {code} retrying in {} secs",
                                     service.config.retry_delay.as_secs()
@@ -270,7 +271,9 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             }
                         };
 
-                        epoll.delete(pid).expect("Cannot remove dead service pidfd");
+                        epoll
+                            .delete(pidfd)
+                            .expect("Cannot remove dead service pidfd");
 
                         service.state = State::Dead;
                         service.death_count += 1;
@@ -339,7 +342,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                         epoll_data_to_retry_timerfd_mapper.remove(&service.id);
                         epoll
                             .add(
-                                service.main_pid.as_ref().unwrap().as_fd(),
+                                service.main_pid.as_ref().unwrap().0.as_fd(),
                                 EpollEvent::new(EpollFlags::EPOLLHUP, service.id),
                             )
                             .expect("Cannot add respawned service to epoll watch list");
@@ -439,7 +442,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
 
                             epoll
                                 .add(
-                                    service.main_pid.as_ref().unwrap().as_fd(),
+                                    service.main_pid.as_ref().unwrap().0.as_fd(),
                                     EpollEvent::new(
                                         EpollFlags::EPOLLIN | EpollFlags::EPOLLHUP,
                                         service.id,

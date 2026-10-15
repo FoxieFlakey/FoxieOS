@@ -24,7 +24,10 @@ pub struct SpawnArgs {
 #[binder_ipc_object(interface_id = "foxie.ISandbox")]
 pub trait ISandbox: IObject {
     fn kill_all(&self) -> anyhow::Result<Serde<()>>;
-    fn spawn(&self, spawn_args: Serde<SpawnArgs>) -> anyhow::Result<anyhow::Result<SafePidFd>>;
+    fn spawn(
+        &self,
+        spawn_args: Serde<SpawnArgs>,
+    ) -> anyhow::Result<anyhow::Result<(SafePidFd, nix::libc::pid_t)>>;
 }
 
 #[derive(Serialize, Deserialize)]

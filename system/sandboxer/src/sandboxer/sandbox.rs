@@ -50,7 +50,7 @@ impl Sandbox {
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
-    fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<SafePidFd> {
+    fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<(SafePidFd, nix::libc::pid_t)> {
         let procs_fd = self
             .get_inner()
             .cgroup
@@ -88,9 +88,11 @@ impl Sandbox {
         helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
         helper.create_pidfd(true);
 
-        let pidfd = helper
+        let child = helper
             .spawn()
-            .context("Cannot spawn sandboxed process thru helper binary")?
+            .context("Cannot spawn sandboxed process thru helper binary")?;
+        let pid = child.id();
+        let pidfd = child
             .into_pidfd()
             .ok()
             .expect("Already requested for pidfd...");
@@ -110,7 +112,7 @@ impl Sandbox {
             .write(1)
             .expect("Cannot wake up sandboxer's reaper");
 
-        Ok(pidfd.into())
+        Ok((pidfd.into(), pid as nix::libc::pid_t))
     }
 }
 
@@ -205,7 +207,10 @@ impl ISandbox for Sandbox {
         Ok(Serde(self.kill_all()))
     }
 
-    fn spawn(&self, spawn_args: Serde<SpawnArgs>) -> anyhow::Result<anyhow::Result<SafePidFd>> {
+    fn spawn(
+        &self,
+        spawn_args: Serde<SpawnArgs>,
+    ) -> anyhow::Result<anyhow::Result<(SafePidFd, nix::libc::pid_t)>> {
         Ok(self.spawn(spawn_args))
     }
 }
