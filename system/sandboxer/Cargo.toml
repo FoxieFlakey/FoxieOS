@@ -1,0 +1,14 @@
+[package]
+name = "sandboxer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+command-fds = "0.3.3"
+foxie_base = { version = "0.1.0", path = "../../interface/foxie_base" }
+libbinder = { version = "0.1.0", path = "../../libs/libbinder/libbinder" }
+libbinder-basic = { version = "0.1.0", path = "../../libs/libbinder/extras/libbinder-basic", features = ["macros"] }
+nix = { version = "0.31.3", features = ["fs", "mount", "sched"] }
+openat = "0.1.21"
+parking_lot = "0.12.5"

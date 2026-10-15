@@ -1,4 +1,5 @@
 use std::{
+    process::{Child, Command},
     sync::{Arc, OnceLock, Weak},
     time::Duration,
 };
@@ -25,6 +26,8 @@ pub static INIT: OnceLock<Arc<B<dyn IServiceManagerCtl>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
 pub static DO_SHUTDOWN_COND: Condvar = Condvar::new();
 
+static SANDBOXER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
+
 pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     INIT.set(Arc::new(B::new(Init {
         rt: Arc::downgrade(runtime),
@@ -34,6 +37,14 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
 
     // Starting the process service manager (not binder)
     process_services::start_watcher().context("Cannot start process service manager")?;
+
+    // Spawn 2nd sandboxer for testing.
+    *SANDBOXER_CHILD.lock() = Some(
+        Command::new("/system/bin/sandboxer")
+            .spawn()
+            .context("Cannot spawn sandboxer service")?,
+    );
+
     process_services::send_request(Request::AddService(process_services::Config {
         name: "shell".to_string(),
         binary: "/system/bin/tty_spawner".into(),

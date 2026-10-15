@@ -16,6 +16,7 @@ static CRATES: &[&str] = &[
     "sandbox_helper",
     "service_manager",
     "tty_spawner",
+    "sandboxer",
 ];
 
 static DIRS: &[&str] = &[

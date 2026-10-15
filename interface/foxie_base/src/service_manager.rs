@@ -44,7 +44,7 @@ pub enum StopError {
 
 #[binder_ipc_object(interface_id = "foxie.IService")]
 pub trait IService: IObject {
-    fn stop(&self) -> anyhow::Result<Result<(), Serde<GetServiceManagerCtlError>>>;
+    fn stop(&self) -> anyhow::Result<anyhow::Result<()>>;
 }
 
 #[derive(Serialize, Deserialize, Debug, thiserror::Error)]

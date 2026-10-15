@@ -36,7 +36,7 @@ where
                     rt: Arc::downgrade(rt),
                     this: this.clone(),
                     state: RwLock::new(State {
-                        is_shutting_down: true,
+                        is_shutting_down: false,
                         services: HashMap::new(),
                     }),
                 })
@@ -125,6 +125,7 @@ impl IServiceManager for ServiceManager {
             }
         });
 
+        println!("service_manager: Registered service '{}'", name);
         Ok(Ok(token))
     }
 

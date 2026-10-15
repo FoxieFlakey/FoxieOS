@@ -302,6 +302,7 @@ dependencies = [
  "anyhow",
  "libbinder",
  "libbinder-basic",
+ "nix",
  "serde",
  "thiserror",
 ]
@@ -665,6 +666,20 @@ dependencies = [
  "caps",
  "clap",
  "nix",
+]
+
+[[package]]
+name = "sandboxer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command-fds",
+ "foxie_base",
+ "libbinder",
+ "libbinder-basic",
+ "nix",
+ "openat",
+ "parking_lot",
 ]
 
 [[package]]
