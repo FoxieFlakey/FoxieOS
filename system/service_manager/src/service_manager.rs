@@ -8,8 +8,10 @@ use foxie_base::{
     IObject, IToken,
     impls::Token,
     iobject,
-    service_manager::{GetInitError, IService, IServiceManager, RegisterError, iservicemanager},
-    system_server::ISystemServer,
+    service_manager::{
+        GetServiceManagerCtlError, IService, IServiceManager, IServiceManagerCtl, RegisterError,
+        iservicemanager,
+    },
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
@@ -135,13 +137,16 @@ impl IServiceManager for ServiceManager {
         }
     }
 
-    fn get_system_server(
+    fn get_ctl(
         &self,
-    ) -> anyhow::Result<Result<Arc<B<dyn ISystemServer>>, Serde<GetInitError>>> {
+    ) -> anyhow::Result<Result<Arc<B<dyn IServiceManagerCtl>>, Serde<GetServiceManagerCtlError>>>
+    {
         if let Some(init) = init_task::INIT.get() {
             Ok(Ok(init.clone()))
         } else {
-            Ok(Err(Serde(GetInitError::InitNotReady)))
+            Ok(Err(Serde(
+                GetServiceManagerCtlError::ServiceManagerNotReady,
+            )))
         }
     }
 }

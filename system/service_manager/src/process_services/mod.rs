@@ -93,7 +93,7 @@ impl Service {
             .get_pid()
             .map(|x| x.to_string())
             .unwrap_or("<unknown>".to_string());
-        println!("system_server: Stopping service '{name}' (pid {pid_str})");
+        println!("service_manager: Stopping service '{name}' (pid {pid_str})");
         pid.send_signal(self.config.graceful_signal as i32)
             .with_context(|| {
                 format!(
@@ -137,13 +137,13 @@ impl Service {
         match waitid(Id::PIDFd(pid.as_fd()), WaitPidFlag::WEXITED) {
             Ok(WaitStatus::Signaled(pid, signal, ..)) => {
                 println!(
-                    "system_server: Service '{name}' (pid {pid}) killed with {signal} in {:3.2} secs",
+                    "service_manager: Service '{name}' (pid {pid}) killed with {signal} in {:3.2} secs",
                     stop_time.elapsed().as_secs_f32()
                 );
             }
             Ok(WaitStatus::Exited(pid, code)) => {
                 println!(
-                    "system_server: Service '{name}' (pid {pid}) stopped with code {code} in {:3.2} secs",
+                    "service_manager: Service '{name}' (pid {pid}) stopped with code {code} in {:3.2} secs",
                     stop_time.elapsed().as_secs_f32()
                 );
             }
@@ -261,13 +261,13 @@ pub fn start_watcher() -> anyhow::Result<()> {
                         match waitid(Id::PIDFd(pid.as_fd()), WaitPidFlag::WEXITED) {
                             Ok(WaitStatus::Signaled(pid, signal, ..)) => {
                                 println!(
-                                    "system_server: Service '{name}' (pid {pid}) killed with {signal} retrying in {} secs",
+                                    "service_manager: Service '{name}' (pid {pid}) killed with {signal} retrying in {} secs",
                                     service.config.retry_delay.as_secs()
                                 );
                             }
                             Ok(WaitStatus::Exited(pid, code)) => {
                                 println!(
-                                    "system_server: Service '{name}' (pid {pid}) exited with code {code} retrying in {} secs",
+                                    "service_manager: Service '{name}' (pid {pid}) exited with code {code} retrying in {} secs",
                                     service.config.retry_delay.as_secs()
                                 );
                             }
@@ -285,7 +285,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             && service.death_count >= service.config.retry_count
                         {
                             println!(
-                                "system_server: Service '{name}' died too many time (>= {}) within {:3.2} secs. Won't restarting",
+                                "service_manager: Service '{name}' died too many time (>= {}) within {:3.2} secs. Won't restarting",
                                 service.config.retry_count,
                                 service.config.retry_window.as_secs_f32()
                             );
@@ -338,11 +338,11 @@ pub fn start_watcher() -> anyhow::Result<()> {
 
                     if let Err(e) = service.spawn() {
                         println!(
-                            "system_server: Cannot respawn service retrying in {:3.2} secs: {e}",
+                            "service_manager: Cannot respawn service retrying in {:3.2} secs: {e}",
                             service.config.retry_delay.as_secs_f32()
                         );
                     } else {
-                        println!("system_server: Respawned service '{name}'");
+                        println!("service_manager: Respawned service '{name}'");
                         epoll_data_to_retry_timerfd_mapper.remove(&service.id);
                         epoll
                             .add(

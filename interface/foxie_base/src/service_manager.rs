@@ -4,14 +4,14 @@ use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::{binder_ipc_object, packetable::Serde};
 use serde::{Deserialize, Serialize};
 
-use crate::{IObject, IToken, iobject, system_server::ISystemServer};
+use crate::{IObject, IToken, iobject};
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]
-pub enum GetInitError {
+pub enum GetServiceManagerCtlError {
     #[error("Permission denied")]
     PermissionDenied,
-    #[error("Init is not ready")]
-    InitNotReady,
+    #[error("Service manager is not ready")]
+    ServiceManagerNotReady,
 }
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]
@@ -31,9 +31,9 @@ pub trait IServiceManager: IObject {
         service: Arc<B<dyn IService>>,
     ) -> anyhow::Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>>;
     fn get_service(&self, name: &str) -> anyhow::Result<Option<Arc<B<dyn IService>>>>;
-    fn get_system_server(
+    fn get_ctl(
         &self,
-    ) -> anyhow::Result<Result<Arc<B<dyn ISystemServer>>, Serde<GetInitError>>>;
+    ) -> anyhow::Result<Result<Arc<B<dyn IServiceManagerCtl>>, Serde<GetServiceManagerCtlError>>>;
 }
 
 #[derive(Serialize, Deserialize, thiserror::Error, Debug)]
@@ -44,5 +44,17 @@ pub enum StopError {
 
 #[binder_ipc_object(interface_id = "foxie.IService")]
 pub trait IService: IObject {
-    fn stop(&self) -> anyhow::Result<Result<(), Serde<GetInitError>>>;
+    fn stop(&self) -> anyhow::Result<Result<(), Serde<GetServiceManagerCtlError>>>;
+}
+
+#[derive(Serialize, Deserialize, Debug, thiserror::Error)]
+pub enum ShutdownError {
+    #[error("Permission denied")]
+    PermissionDenied,
+}
+
+#[binder_ipc_object(interface_id = "foxie.IServiceManagerCtl")]
+pub trait IServiceManagerCtl: IObject {
+    fn request_shutdown(&self) -> anyhow::Result<Result<(), Serde<ShutdownError>>>;
+    fn ping(&self) -> anyhow::Result<Serde<String>>;
 }

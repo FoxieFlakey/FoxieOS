@@ -3,7 +3,6 @@ use libbinder_basic::binder_ipc_object;
 
 pub mod impls;
 pub mod service_manager;
-pub mod system_server;
 
 pub static MAIN_BINDER_PATH: &str = "/dev/binder";
 

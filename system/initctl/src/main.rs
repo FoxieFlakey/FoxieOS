@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
         .downcast_ref::<iservicemanager::ProxyIServiceManager>()
         .unwrap();
     let init = init
-        .get_system_server()
+        .get_ctl()
         .context("Cannot call to service manager")?
         .map_err(|x| anyhow!("Cannot get init object: {}", x.0))?;
 
