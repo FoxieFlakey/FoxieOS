@@ -46,13 +46,13 @@ fn main() -> anyhow::Result<Infallible> {
 
     // We will wait outselves later, for why Child is dropped
     let server_pid = i32::try_from(
-        Command::new("/system/bin/system_server")
+        Command::new("/system/bin/service_manager")
             .args(args)
             .spawn()
-            .context("Cannot spawn system_server")?
+            .context("Cannot spawn service_manager")?
             .id(),
     )
-    .context("System server PID is too big")?;
+    .context("Service manager PID is too big")?;
 
     thread::spawn(shell_spawner);
 
@@ -85,10 +85,10 @@ fn main() -> anyhow::Result<Infallible> {
                 println!("init: (repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
                     if code == 0 {
-                        // System server exited normally, it meean it requests shutdown
+                        // Service manager exited normally, it meean it requests shutdown
                         do_shutdown();
                     } else {
-                        bail!("System server must not exit at all. It exited with code {code}");
+                        bail!("Service manager must not exit at all. It exited with code {code}");
                     }
                 }
 

@@ -14,7 +14,7 @@ static CRATES: &[&str] = &[
     "init",
     "initctl",
     "sandbox_helper",
-    "system_server",
+    "service_manager",
     "tty_spawner",
 ];
 
