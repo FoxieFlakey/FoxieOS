@@ -23,7 +23,7 @@ use nix::{
         signal::{SigSet, Signal},
         timer::{Expiration, TimerSetTimeFlags},
         timerfd::{ClockId, TimerFd, TimerFlags},
-        wait::{Id, WaitPidFlag, WaitStatus, waitid},
+        wait::WaitStatus,
     },
     unistd::{Pid, Uid},
 };
@@ -132,14 +132,17 @@ impl Service {
             .kill_all()
             .context("Cannot send request to kill sandbox")?;
 
-        match waitid(Id::PIDFd(pidfd.as_fd()), WaitPidFlag::WEXITED) {
-            Ok(WaitStatus::Signaled(pid, signal, ..)) => {
+        match pidfd
+            .wait_for_termination_reason()
+            .context("Cannot wait for termination status of service")
+        {
+            Ok(WaitStatus::Signaled(_, signal, ..)) => {
                 println!(
                     "service_manager: Service '{name}' (pid {pid}) killed with {signal} in {:3.2} secs",
                     stop_time.elapsed().as_secs_f32()
                 );
             }
-            Ok(WaitStatus::Exited(pid, code)) => {
+            Ok(WaitStatus::Exited(_, code)) => {
                 println!(
                     "service_manager: Service '{name}' (pid {pid}) stopped with code {code} in {:3.2} secs",
                     stop_time.elapsed().as_secs_f32()
