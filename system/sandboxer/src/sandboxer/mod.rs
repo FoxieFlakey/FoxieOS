@@ -90,7 +90,17 @@ pub fn init() -> anyhow::Result<()> {
                 PollFd::new(REAPER_WAKE.as_fd(), PollFlags::POLLIN),
             ];
 
-            poll(&mut pollfds, PollTimeout::NONE).expect("Cannot poll");
+            loop {
+                let Err(e) = poll(&mut pollfds, PollTimeout::NONE) else {
+                    break;
+                };
+
+                if e == Errno::EINTR {
+                    // Interrupted
+                    continue;
+                }
+                Err::<(), _>(e).expect("Cannot poll");
+            }
 
             if !pollfds[0].revents().unwrap().is_empty() {
                 let mut events = [EpollEvent::empty(); 100];

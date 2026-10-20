@@ -44,7 +44,17 @@ impl PidFdExtFoxie for PidFd {
         )];
 
         loop {
-            poll(&mut pollfds, PollTimeout::NONE).context("Cannot poll for pidfd")?;
+            loop {
+                let Err(e) = poll(&mut pollfds, PollTimeout::NONE) else {
+                    break;
+                };
+
+                if e == Errno::EINTR {
+                    // Interrupted
+                    continue;
+                }
+                Err::<(), _>(e).context("Cannot poll for pidfd")?;
+            }
 
             if !pollfds[0].revents().unwrap().is_empty() {
                 // Process either reaped or dead
