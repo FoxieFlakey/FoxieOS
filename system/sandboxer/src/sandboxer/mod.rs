@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::CString,
     fs,
     os::{fd::AsFd, linux::process::PidFd},
     path::Path,
@@ -21,6 +22,7 @@ use nix::{
     sys::{
         epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
         eventfd::{EfdFlags, EventFd},
+        prctl,
         stat::Mode,
     },
     unistd::{Uid, chroot, fchdir},
@@ -76,6 +78,8 @@ pub fn init() -> anyhow::Result<()> {
 
     let (sender, receiver) = mpsc::channel::<PidFd>();
     let reaper = thread::spawn(move || {
+        prctl::set_name(&CString::new("Reaper").unwrap()).expect("Cannot rename reapear thread");
+
         let mut watched: HashMap<u64, PidFd> = HashMap::new();
         let mut id = 0;
 
@@ -137,6 +141,8 @@ pub fn init() -> anyhow::Result<()> {
     let (sender, receiver) = mpsc::channel();
 
     let background = thread::spawn(move || {
+        prctl::set_name(&CString::new("Sandbox cleaner").unwrap())
+            .expect("Cannot rename sandbox cleaner thread");
         let mut watched = Vec::new();
         loop {
             match receiver.recv_timeout(Duration::from_secs(5)) {

@@ -5,6 +5,7 @@
 use std::{
     cmp,
     collections::HashMap,
+    ffi::CString,
     os::fd::{AsFd, FromRawFd, IntoRawFd},
     sync::{Arc, LazyLock, OnceLock, mpsc, oneshot},
     thread,
@@ -20,6 +21,7 @@ use nix::{
     sys::{
         epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
         eventfd::{EfdFlags, EventFd},
+        prctl,
         signal::{SigSet, Signal},
         timer::{Expiration, TimerSetTimeFlags},
         timerfd::{ClockId, TimerFd, TimerFlags},
@@ -217,6 +219,8 @@ pub fn start_watcher() -> anyhow::Result<()> {
     let retry_epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)
         .context("Cannot create epoll fd for retries")?;
     thread::spawn(move || {
+        prctl::set_name(&CString::new("Watcher").unwrap()).expect("Cannot rename watcher thread");
+
         let recv = recv;
         let mut active_services: HashMap<String, Service> = HashMap::new();
         let mut epoll_data_to_name_mapper: HashMap<u64, String> = HashMap::new();
