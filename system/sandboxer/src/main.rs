@@ -3,6 +3,7 @@
 use std::sync::{Arc, Weak};
 
 use anyhow::{Context, anyhow};
+use caps::CapSet;
 use foxie_base::{
     IObject, iobject,
     sandboxer::{ISandbox, ISandboxService, isandboxservice},
@@ -14,6 +15,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::{TryFromProxy, packetable::Serde};
+use nix::{sys::prctl, unistd::setuid};
 use parking_lot::{Condvar, Mutex};
 
 mod constants;
@@ -28,6 +30,23 @@ static SHUTDOWN_CHANGED: Condvar = Condvar::new();
 // Sandbox service never shutdown. It runs forever
 // till end of system
 fn main() -> anyhow::Result<()> {
+    // Lets drop UID before registering and retaining all capabilities
+
+    prctl::set_keepcaps(true).context("Cant ask to retain capability")?;
+    caps::set(None, CapSet::Effective, &caps::all())
+        .context("Setting effective capability before setuid")?;
+    caps::set(None, CapSet::Inheritable, &caps::all())
+        .context("Setting inheritable capability before setuid")?;
+    caps::set(None, CapSet::Ambient, &caps::all())
+        .context("Setting ambient capability before setuid")?;
+    setuid(uids::SANDBOXER).context("Cannot drop UID")?;
+    caps::set(None, CapSet::Effective, &caps::all())
+        .context("Cannot restore effective capability after setuid")?;
+    caps::set(None, CapSet::Inheritable, &caps::all())
+        .context("Setting inheritable capability after setuid")?;
+    caps::set(None, CapSet::Ambient, &caps::all())
+        .context("Cannot restore ambient capability after setuid")?;
+
     let runtime = Runtime::new(
         foxie_base::MAIN_BINDER_PATH,
         ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceManager>::try_from_proxy(x)?))),

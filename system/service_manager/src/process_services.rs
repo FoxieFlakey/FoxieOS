@@ -23,6 +23,7 @@ use foxie_base::{
 use libbinder::object::B;
 use libbinder_basic::packetable::Serde;
 use nix::{
+    errno::Errno,
     poll::{PollFd, PollFlags, PollTimeout, poll, ppoll},
     sys::{
         epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
@@ -257,7 +258,17 @@ pub fn start_watcher() -> anyhow::Result<()> {
                 PollFd::new(REQUEST_ENQUEUED.as_fd(), PollFlags::POLLIN),
             ];
 
-            poll(&mut pollfds, PollTimeout::NONE).expect("Cannot poll");
+            loop {
+                let Err(e) = poll(&mut pollfds, PollTimeout::NONE) else {
+                    break;
+                };
+
+                if e == Errno::EINTR {
+                    // Interrupted
+                    continue;
+                }
+                Err::<(), _>(e).expect("Cannot poll");
+            }
 
             // Handle deaths
             if !pollfds[0].revents().unwrap().is_empty() {

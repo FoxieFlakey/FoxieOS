@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+caps = "0.5.6"
 command-fds = "0.3.3"
 foxie_base = { version = "0.1.0", path = "../../system/foxie_base" }
 libbinder = { version = "0.1.0", path = "../../libs/libbinder/libbinder" }

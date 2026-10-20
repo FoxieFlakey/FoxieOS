@@ -532,6 +532,7 @@ name = "sandboxer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caps",
  "command-fds",
  "foxie_base",
  "libbinder",

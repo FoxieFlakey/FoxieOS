@@ -60,7 +60,7 @@ fn main() -> Result<Infallible, anyhow::Error> {
     cmd.args(&cli.argv);
 
     prctl::set_no_new_privs().context("Cannot set PR_SET_NO_NEW_PRIVS")?;
-    caps::securebits::set_keepcaps(false).context("Cannot clear keepcaps flag")?;
+    prctl::set_keepcaps(false).context("Cannot set PR_SET_KEEPCAPS to false")?;
 
     // SAFETY: Caller passed the FD, we own it
     let procs_fd =

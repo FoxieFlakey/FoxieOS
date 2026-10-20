@@ -15,6 +15,7 @@ use std::{
 
 use anyhow::Context;
 use nix::{
+    errno::Errno,
     fcntl::{OFlag, open},
     mount::{MntFlags, MsFlags, mount, umount2},
     poll::{PollFd, PollFlags, PollTimeout, poll},
