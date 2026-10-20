@@ -16,7 +16,10 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use foxie_base::sandboxer::{ISandbox, SpawnArgs};
+use foxie_base::{
+    common::SerdeSignal,
+    sandboxer::{IProcessHandle, ISandbox, SpawnArgs},
+};
 use libbinder::object::B;
 use libbinder_basic::packetable::Serde;
 use nix::{
@@ -33,12 +36,12 @@ use nix::{
     unistd::{Pid, Uid},
 };
 
-use crate::pidfd::PidFdExtFoxie;
+use pidfd_util::PidFdExtFoxie;
 
 struct Service {
     id: u64,
     sandbox: Arc<B<dyn ISandbox>>,
-    main_pid: Option<(PidFd, Pid)>,
+    main_pid: Option<(PidFd, Arc<B<dyn IProcessHandle>>, Pid)>,
     config: Config,
     state: State,
 
@@ -60,7 +63,7 @@ impl Service {
             "Cannot spawn service that is curently running"
         );
 
-        let (pidfd, pid) = self
+        let (pidfd, handle, pid) = self
             .sandbox
             .spawn(Serde(SpawnArgs {
                 path: self.config.binary.clone(),
@@ -73,6 +76,7 @@ impl Service {
         // SAFETY: We just got it from std's PidFd
         self.main_pid = Some((
             unsafe { PidFd::from_raw_fd(pidfd.into_inner().into_raw_fd()) },
+            handle,
             Pid::from_raw(pid),
         ));
         self.state = State::Started;
@@ -85,15 +89,32 @@ impl Service {
             return Ok(None);
         }
 
-        let (pidfd, pid) = self.main_pid.take().unwrap();
+        let (pidfd, handle, pid) = self.main_pid.take().unwrap();
+
+        match self.stop_impl_impl(&pidfd, &handle, pid) {
+            Ok(()) => Ok(Some(pidfd)),
+            Err(e) => {
+                self.main_pid = Some((pidfd, handle, pid));
+                Err(e)
+            }
+        }
+    }
+
+    fn stop_impl_impl(
+        &mut self,
+        pidfd: &PidFd,
+        handle: &Arc<B<dyn IProcessHandle>>,
+        pid: Pid,
+    ) -> anyhow::Result<()> {
         let name = &self.config.name;
 
         // First try graceful kill
         let stop_time = Instant::now();
         let pid_str = format!("{}", pid);
         println!("service_manager: Stopping service '{name}' (pid {pid_str})");
-        pidfd
-            .send_signal(self.config.graceful_signal)
+        handle
+            .send_signal(SerdeSignal(self.config.graceful_signal))
+            .context("Cannot send transaction to sandboxer")?
             .with_context(|| {
                 format!(
                     "Cannot send graceful signal {} to {pid_str}",
@@ -134,6 +155,7 @@ impl Service {
         self.sandbox
             .kill_all()
             .context("Cannot send request to kill sandbox")?;
+        self.state = State::Stopped;
 
         match pidfd
             .wait_for_termination_reason()
@@ -156,7 +178,7 @@ impl Service {
                 panic!("Failed to wait on service pidfd: {}", e);
             }
         };
-        Ok(Some(pidfd))
+        Ok(())
     }
 }
 
@@ -186,7 +208,6 @@ pub struct Config {
 pub enum Request {
     AddService(Config),
     Start(String),
-    #[expect(unused)]
     Stop(String),
     #[expect(unused)]
     RemoveService(String),
@@ -255,7 +276,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             .get_mut(name)
                             .expect("epoll cannot contain unknown fd?");
 
-                        let (pidfd, pid) = service
+                        let (pidfd, _, pid) = service
                             .main_pid
                             .take()
                             .expect("Service must have already its pidfd present");
@@ -369,6 +390,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             let Some(service) = active_services.get_mut(&name) else {
                                 bail!("Service named '{name}' dont exists")
                             };
+                            println!("service_manager: Starting service '{name}'");
 
                             if service.state == State::Started {
                                 // Service already started
@@ -384,6 +406,7 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             let Some(mut service) = active_services.remove(&name) else {
                                 bail!("Service named '{name}' dont exists")
                             };
+                            println!("service_manager: Removing service '{name}'");
 
                             if let Some(pid) = service.stop_impl()? {
                                 // It was running, then remove it from epoll
@@ -409,6 +432,10 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             if active_services.contains_key(&config.name) {
                                 bail!("Service named '{}' already existed", &config.name)
                             }
+                            println!(
+                                "service_manager: Adding service '{}' ({})",
+                                config.name, config.binary,
+                            );
 
                             // Set upper and lower limits on stuffs
                             config.graceful_delay = cmp::max(

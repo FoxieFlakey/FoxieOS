@@ -1,11 +1,11 @@
 use std::{
     io::Write,
     os::{
-        fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd},
-        linux::process::{ChildExt, CommandExt, PidFd},
+        fd::{AsFd, AsRawFd, OwnedFd},
+        linux::process::{ChildExt, CommandExt},
     },
     process::Command,
-    sync::Weak,
+    sync::{Arc, Weak},
 };
 
 use anyhow::Context;
@@ -14,14 +14,17 @@ use foxie_base::{
     IObject,
     common::SafePidFd,
     iobject,
-    sandboxer::{ISandbox, SpawnArgs, isandbox},
+    sandboxer::{IProcessHandle, ISandbox, SpawnArgs, isandbox},
 };
-use libbinder::object::ObjectTrait;
+use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::packetable::Serde;
-use nix::unistd::{Uid, dup, sleep};
+use nix::unistd::{Uid, sleep};
 use openat::Dir;
+use pidfd_util::PidFdExtFoxie;
 
-use crate::{constants::SANDBOXER_HELPER_PATH, sandboxer::SANDBOX_ID_FREE};
+use crate::{
+    constants::SANDBOXER_HELPER_PATH, process_handle::ProcessHandle, sandboxer::SANDBOX_ID_FREE,
+};
 
 pub(super) struct Inner {
     pub(super) id: u64,
@@ -50,7 +53,10 @@ impl Sandbox {
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
-    fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<(SafePidFd, nix::libc::pid_t)> {
+    fn spawn(
+        &self,
+        args: Serde<SpawnArgs>,
+    ) -> anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)> {
         let procs_fd = self
             .get_inner()
             .cgroup
@@ -98,21 +104,25 @@ impl Sandbox {
             .expect("Already requested for pidfd...");
 
         // We create second PidFd instance to be used by reaper
-        let duped = dup(pidfd.as_fd()).context("Cannot dup pidfd")?;
-
-        // SAFETY: This is valid fd, we just dup'ed it
-        let duped_pidfd = unsafe { PidFd::from_raw_fd(duped.into_raw_fd()) };
         super::REAPER_QUEUE
             .read()
             .as_ref()
             .unwrap()
-            .send(duped_pidfd)
+            .send(pidfd.dup().context("Cannot dup pidfd")?)
             .expect("Cannot send pidfd to sandboxer's reaper to be watched");
         super::REAPER_WAKE
             .write(1)
             .expect("Cannot wake up sandboxer's reaper");
 
-        Ok((pidfd.into(), pid as nix::libc::pid_t))
+        let handle = ProcessHandle {
+            pidfd: pidfd.dup().context("Cannot dup pidfd")?,
+            rt: self.binder_runtime.clone(),
+        };
+        Ok((
+            pidfd.into(),
+            Arc::new(B::new(handle)),
+            pid as nix::libc::pid_t,
+        ))
     }
 }
 
@@ -210,7 +220,8 @@ impl ISandbox for Sandbox {
     fn spawn(
         &self,
         spawn_args: Serde<SpawnArgs>,
-    ) -> anyhow::Result<anyhow::Result<(SafePidFd, nix::libc::pid_t)>> {
+    ) -> anyhow::Result<anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)>>
+    {
         Ok(self.spawn(spawn_args))
     }
 }

@@ -14,12 +14,11 @@ use crate::{
 
 mod constants;
 mod init_task;
-mod pidfd;
 mod process_services;
 mod root_dev;
 mod service_manager;
 
-fn do_main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     root_dev::discover_root().context("Cannot find root device")?;
 
     println!("Root device was found at {}", root_dev::get_root_dev());
@@ -70,18 +69,4 @@ fn do_main() -> anyhow::Result<()> {
         Ok(())
     })?;
     Ok(())
-}
-
-fn main() -> anyhow::Result<()> {
-    if let Err(e) = do_main() {
-        println!("init crashed with error: {e:#?}");
-        println!("Entering rescue shell. Exiting will continue error handling");
-        Command::new("/system/bin/busybox")
-            .arg("sh")
-            .status()
-            .context("Cannot start shell")?;
-        Err(e)
-    } else {
-        Ok(())
-    }
 }

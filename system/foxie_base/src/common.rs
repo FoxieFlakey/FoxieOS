@@ -1,4 +1,5 @@
 use std::{
+    ffi::c_int,
     ops::{Deref, DerefMut},
     os::{
         fd::{AsFd, OwnedFd},
@@ -8,7 +9,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use libbinder_basic::packetable::Packetable;
-use nix::sys::statfs::fstatfs;
+use nix::sys::{signal::Signal, statfs::fstatfs};
 
 pub struct SafePidFd(PidFd);
 
@@ -61,5 +62,22 @@ impl Packetable<'_> for SafePidFd {
 
     fn deserialize(reader: &mut libbinder_basic::reader::Reader<'_>) -> anyhow::Result<Self> {
         Self::try_from(reader.read_fd()?)
+    }
+}
+
+pub struct SerdeSignal(pub Signal);
+
+impl<'a> Packetable<'a> for SerdeSignal {
+    fn serialize(&self, writer: &mut libbinder_basic::writer::Writer) -> anyhow::Result<()> {
+        writer.write_bytes_raw(&(self.0 as c_int).to_ne_bytes());
+        Ok(())
+    }
+
+    fn deserialize(reader: &mut libbinder_basic::reader::Reader<'a>) -> anyhow::Result<Self> {
+        let mut sig = [0; size_of::<c_int>()];
+        reader.read_bytes_raw(&mut sig)?;
+        Ok(Self(
+            Signal::try_from(c_int::from_ne_bytes(sig)).context("Invalid signal")?,
+        ))
     }
 }

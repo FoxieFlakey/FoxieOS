@@ -5,7 +5,10 @@ use libbinder_basic::{binder_ipc_object, packetable::Serde};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    IObject, common::SafePidFd, iobject, service_manager::IService, service_manager::iservice,
+    IObject,
+    common::{SafePidFd, SerdeSignal},
+    iobject,
+    service_manager::{IService, iservice},
 };
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -27,7 +30,12 @@ pub trait ISandbox: IObject {
     fn spawn(
         &self,
         spawn_args: Serde<SpawnArgs>,
-    ) -> anyhow::Result<anyhow::Result<(SafePidFd, nix::libc::pid_t)>>;
+    ) -> anyhow::Result<anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)>>;
+}
+
+#[binder_ipc_object(interface_id = "foxie.ISandboxProcess")]
+pub trait IProcessHandle: IObject {
+    fn send_signal(&self, signal: SerdeSignal) -> anyhow::Result<anyhow::Result<Serde<()>>>;
 }
 
 #[derive(Serialize, Deserialize)]

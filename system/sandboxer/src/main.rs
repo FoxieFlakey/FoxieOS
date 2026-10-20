@@ -16,6 +16,7 @@ use libbinder_basic::{TryFromProxy, packetable::Serde};
 use parking_lot::{Condvar, Mutex};
 
 mod constants;
+mod process_handle;
 mod root_dev;
 mod sandbox_profiles;
 mod sandboxer;
