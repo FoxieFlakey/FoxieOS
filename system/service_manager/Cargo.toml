@@ -13,4 +13,3 @@ libbinder-basic = { version = "0.1.0", path = "../../libs/libbinder/extras/libbi
 nix = { version = "0.31.3", features = ["event", "fs", "mount", "process", "sched", "signal", "time", "user"] }
 openat = "0.1.21"
 parking_lot = "0.12.5"
-pidfd-util = { version = "0.1.0", path = "../../libs/pidfd-util", default-features = false }

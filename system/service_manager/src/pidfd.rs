@@ -1,14 +1,19 @@
-use std::os::fd::{AsFd, AsRawFd};
+use std::{
+    ffi::c_int,
+    os::{
+        fd::{AsFd, AsRawFd},
+        linux::process::PidFd,
+    },
+};
 
 use anyhow::Context;
 use nix::{
     errno::Errno,
-    libc,
+    libc::{self, SYS_pidfd_send_signal, syscall},
     poll::{PollFd, PollFlags, PollTimeout, poll},
-    sys::wait::WaitStatus,
+    sys::{signal::Signal, wait::WaitStatus},
     unistd::Pid,
 };
-use pidfd_util::PidFd;
 
 mod private {
     pub trait Sealed {}
@@ -17,6 +22,7 @@ mod private {
 pub trait PidFdExtFoxie: private::Sealed {
     fn get_termination_reason(&self) -> Result<WaitStatus, Errno>;
     fn wait_for_termination_reason(&self) -> anyhow::Result<WaitStatus>;
+    fn send_signal(&self, sig: Signal) -> Result<(), Errno>;
 }
 
 impl private::Sealed for PidFd {}
@@ -57,5 +63,22 @@ impl PidFdExtFoxie for PidFd {
             Pid::from_raw(info.pid as i32),
             info.exit_code,
         )?)
+    }
+
+    fn send_signal(&self, sig: Signal) -> Result<(), Errno> {
+        let res = unsafe {
+            syscall(
+                SYS_pidfd_send_signal,
+                c_int::from(self.as_raw_fd()),
+                c_int::from(sig as i32),
+            )
+        };
+
+        if res == -1 {
+            Err(Errno::last())
+        } else {
+            assert!(res == 0);
+            Ok(())
+        }
     }
 }

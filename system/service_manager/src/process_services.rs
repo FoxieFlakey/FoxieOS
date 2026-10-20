@@ -6,7 +6,10 @@ use std::{
     cmp,
     collections::HashMap,
     ffi::CString,
-    os::fd::{AsFd, FromRawFd, IntoRawFd},
+    os::{
+        fd::{AsFd, FromRawFd, IntoRawFd},
+        linux::process::PidFd,
+    },
     sync::{Arc, LazyLock, OnceLock, mpsc, oneshot},
     thread,
     time::{Duration, Instant},
@@ -29,8 +32,6 @@ use nix::{
     },
     unistd::{Pid, Uid},
 };
-
-use pidfd_util::{PidFd, PidFdExt};
 
 use crate::pidfd::PidFdExtFoxie;
 
@@ -92,7 +93,7 @@ impl Service {
         let pid_str = format!("{}", pid);
         println!("service_manager: Stopping service '{name}' (pid {pid_str})");
         pidfd
-            .send_signal(self.config.graceful_signal as i32)
+            .send_signal(self.config.graceful_signal)
             .with_context(|| {
                 format!(
                     "Cannot send graceful signal {} to {pid_str}",
