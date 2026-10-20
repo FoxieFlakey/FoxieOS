@@ -280,6 +280,7 @@ name = "init"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "command-fds",
  "nix",
  "parking_lot",
 ]
@@ -533,6 +534,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caps",
+ "clap",
  "command-fds",
  "foxie_base",
  "libbinder",
@@ -584,6 +586,7 @@ name = "service_manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "command-fds",
  "enumflags2",
  "foxie_base",

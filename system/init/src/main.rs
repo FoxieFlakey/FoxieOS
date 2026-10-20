@@ -1,8 +1,7 @@
 use std::{
     convert::Infallible,
-    env,
     fs::{self, File, OpenOptions},
-    os::fd::AsFd,
+    os::fd::{AsFd, AsRawFd},
     path::Path,
     process::Command,
     sync::LazyLock,
@@ -11,16 +10,18 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use command_fds::CommandFdExt;
 use nix::{
     fcntl::AT_FDCWD,
     mount::{MsFlags, mount},
     sys::{
+        eventfd::EventFd,
         reboot::{RebootMode, reboot},
         signal::{Signal, kill},
         stat::{FchmodatFlags, Mode, fchmodat},
         wait::{WaitStatus, waitpid},
     },
-    unistd::{Pid, dup2_stderr, dup2_stdin, dup2_stdout, sync},
+    unistd::{Pid, dup, dup2_stderr, dup2_stdin, dup2_stdout, sync},
 };
 use parking_lot::{Condvar, Mutex};
 
@@ -42,12 +43,32 @@ fn main() -> anyhow::Result<Infallible> {
     dup2_stderr(tty.as_fd()).context("Cannot dup into stderr")?;
     drop(tty);
 
-    let args = env::args().collect::<Vec<_>>();
+    let eventfd_for_service_mgr =
+        EventFd::new().context("Cannot create service manager ready eventfd")?;
+    let eventfd_for_sandboxer = unsafe {
+        EventFd::from_owned_fd(
+            dup(eventfd_for_service_mgr.as_fd())
+                .context("Cannot dup service manager ready eventfd")?,
+        )
+    };
 
     // We will wait outselves later, for why Child is dropped
     let server_pid = i32::try_from(
         Command::new("/system/bin/service_manager")
-            .args(args)
+            .arg("--ready-event-fd")
+            .arg(&format!("{}", eventfd_for_service_mgr.as_raw_fd()))
+            .preserved_fds(vec![eventfd_for_service_mgr.into()])
+            .spawn()
+            .context("Cannot spawn service_manager")?
+            .id(),
+    )
+    .context("Service manager PID is too big")?;
+
+    let sandboxer_pid = i32::try_from(
+        Command::new("/system/bin/sandboxer")
+            .arg("--service-manager-ready-event-fd")
+            .arg(&format!("{}", eventfd_for_sandboxer.as_raw_fd()))
+            .preserved_fds(vec![eventfd_for_sandboxer.into()])
             .spawn()
             .context("Cannot spawn service_manager")?
             .id(),
@@ -90,6 +111,10 @@ fn main() -> anyhow::Result<Infallible> {
                     } else {
                         bail!("Service manager must not exit at all. It exited with code {code}");
                     }
+                }
+
+                if pid.as_raw() == sandboxer_pid {
+                    bail!("Sandboxer must not exit at all. It exited with code {code}");
                 }
 
                 check_shell(pid, code != 0);

@@ -1,16 +1,14 @@
 #![feature(linux_pidfd)]
 #![feature(oneshot_channel)]
 
-use std::{os::linux::process::CommandExt, process::Command};
+use std::os::fd::{FromRawFd, OwnedFd};
 
 use anyhow::Context;
+use clap::Parser;
 use foxie_base::sandboxer::ISandboxService;
-use nix::unistd::setuid;
+use nix::{sys::eventfd::EventFd, unistd::setuid};
 
-use crate::{
-    constants::{SANDBOXER, SANDBOXER_CHILD},
-    service_manager::SERVICE_MANAGER,
-};
+use crate::{constants::SANDBOXER, service_manager::SERVICE_MANAGER};
 
 mod constants;
 mod init_task;
@@ -18,24 +16,34 @@ mod process_services;
 mod root_dev;
 mod service_manager;
 
+#[derive(Parser)]
+struct Cli {
+    #[arg(long)]
+    ready_event_fd: u32,
+}
+
 fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    // Assume caler make it correct
+    let ready_event_fd = unsafe {
+        EventFd::from_owned_fd(OwnedFd::from_raw_fd(
+            cli.ready_event_fd
+                .try_into()
+                .context("--ready-event-fd is not valid fd")?,
+        ))
+    };
+
     root_dev::discover_root().context("Cannot find root device")?;
 
     println!("Root device was found at {}", root_dev::get_root_dev());
     println!("Basic preboot rootfs is ready");
 
     service_manager::run(|rt| {
-        // Spawn sandboxer which is needed by server manager
-        // to be able spawn jobs
-        *SANDBOXER_CHILD.lock() = Some(
-            Command::new("/system/bin/sandboxer")
-                .create_pidfd(true)
-                .spawn()
-                .context("Cannot spawn sandboxer service")?,
-        );
-
         // Deprivilege service_manager
         setuid(foxie_base::uids::SERVICE_MANAER).context("Cannot drop privileges")?;
+
+        // Service manager is ready, wake up the sandboxer to register
+        ready_event_fd.write(1).context("Cannot write to eventfd")?;
 
         let sandboxer_service =
             foxie_base::service_manager::wait_and_get_service::<dyn ISandboxService>(
@@ -59,13 +67,6 @@ fn main() -> anyhow::Result<()> {
             .stop()
             .context("Cannot send stop transaction to sandboxer")?
             .context("Cannot request sandboxer to stop")?;
-        let status = constants::SANDBOXER_CHILD
-            .lock()
-            .take()
-            .unwrap()
-            .wait()
-            .context("Cannot wait for sandboxer to exit")?;
-        println!("service_manager: Sandboxer exited with code {status}");
         Ok(())
     })?;
     Ok(())

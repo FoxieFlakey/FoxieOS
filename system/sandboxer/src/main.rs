@@ -1,9 +1,13 @@
 #![feature(linux_pidfd)]
 
-use std::sync::{Arc, Weak};
+use std::{
+    os::fd::{FromRawFd, OwnedFd},
+    sync::{Arc, Weak},
+};
 
 use anyhow::{Context, anyhow};
 use caps::CapSet;
+use clap::Parser;
 use foxie_base::{
     IObject, iobject,
     sandboxer::{ISandbox, ISandboxService, isandboxservice},
@@ -15,7 +19,10 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::{TryFromProxy, packetable::Serde};
-use nix::{sys::prctl, unistd::setuid};
+use nix::{
+    sys::{eventfd::EventFd, prctl},
+    unistd::setuid,
+};
 use parking_lot::{Condvar, Mutex};
 
 mod constants;
@@ -27,9 +34,25 @@ mod sandboxer;
 static CAN_SHUTDOWN: Mutex<bool> = Mutex::new(false);
 static SHUTDOWN_CHANGED: Condvar = Condvar::new();
 
+#[derive(Parser)]
+struct Cli {
+    #[arg(long)]
+    service_manager_ready_event_fd: u32,
+}
+
 // Sandbox service never shutdown. It runs forever
 // till end of system
 fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    // Assume caler make it correct
+    let service_manager_ready_event_fd = unsafe {
+        EventFd::from_owned_fd(OwnedFd::from_raw_fd(
+            cli.service_manager_ready_event_fd
+                .try_into()
+                .context("--ready-event-fd is not valid fd")?,
+        ))
+    };
+
     // Lets drop UID before registering and retaining all capabilities
 
     prctl::set_keepcaps(true).context("Cant ask to retain capability")?;
@@ -55,6 +78,11 @@ fn main() -> anyhow::Result<()> {
 
     root_dev::discover_root().context("Cannot find root device")?;
     sandboxer::init().context("Initializing sandboxer")?;
+
+    // Service manager is ready, lets do register sandboxer
+    service_manager_ready_event_fd
+        .read()
+        .context("Cannot wait for service manager readyness")?;
 
     let service_manager = runtime
         .get_manager()
