@@ -1,11 +1,12 @@
 use std::{os::linux::process::PidFd, sync::Weak};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use foxie_base::{
     IObject,
     common::SerdeSignal,
     iobject,
     sandboxer::{IProcessHandle, iprocesshandle},
+    uids,
 };
 use libbinder::{Runtime, object::ObjectTrait};
 use libbinder_basic::packetable::Serde;
@@ -47,6 +48,10 @@ impl IObject for ProcessHandle {
 
 impl IProcessHandle for ProcessHandle {
     fn send_signal(&self, signal: SerdeSignal) -> anyhow::Result<anyhow::Result<Serde<()>>> {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
+
         Ok(self
             .pidfd
             .send_signal(signal.0)

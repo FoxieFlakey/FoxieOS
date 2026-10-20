@@ -8,13 +8,14 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use command_fds::CommandFdExt;
 use foxie_base::{
     IObject,
     common::SafePidFd,
     iobject,
     sandboxer::{IProcessHandle, ISandbox, SpawnArgs, isandbox},
+    uids,
 };
 use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::packetable::Serde;
@@ -213,8 +214,11 @@ impl IObject for Sandbox {
 }
 
 impl ISandbox for Sandbox {
-    fn kill_all(&self) -> anyhow::Result<Serde<()>> {
-        Ok(Serde(self.kill_all()))
+    fn kill_all(&self) -> anyhow::Result<anyhow::Result<Serde<()>>> {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
+        Ok(Ok(Serde(self.kill_all())))
     }
 
     fn spawn(
@@ -222,6 +226,9 @@ impl ISandbox for Sandbox {
         spawn_args: Serde<SpawnArgs>,
     ) -> anyhow::Result<anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)>>
     {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
         Ok(self.spawn(spawn_args))
     }
 }

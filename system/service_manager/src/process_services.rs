@@ -154,7 +154,8 @@ impl Service {
         // kill everything in service sandbox.
         self.sandbox
             .kill_all()
-            .context("Cannot send request to kill sandbox")?;
+            .context("Cannot send request to kill sandbox")?
+            .context("Cannot kill all processes")?;
         self.state = State::Stopped;
 
         match pidfd

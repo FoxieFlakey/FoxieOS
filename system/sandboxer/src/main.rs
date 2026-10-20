@@ -2,11 +2,12 @@
 
 use std::sync::{Arc, Weak};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use foxie_base::{
     IObject, iobject,
     sandboxer::{ISandbox, ISandboxService, isandboxservice},
     service_manager::{IService, IServiceManager, iservice, iservicemanager},
+    uids,
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
@@ -109,6 +110,10 @@ impl ISandboxService for Ctl {
         &self,
         config: Serde<foxie_base::sandboxer::Config>,
     ) -> anyhow::Result<anyhow::Result<Arc<B<dyn ISandbox>>>> {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
+
         let profile = config.0.profile;
         let ret = sandboxer::create_sandbox(
             sandboxer::Config {
