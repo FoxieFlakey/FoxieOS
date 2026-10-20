@@ -586,6 +586,7 @@ name = "service_manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caps",
  "clap",
  "command-fds",
  "enumflags2",

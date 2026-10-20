@@ -4,9 +4,13 @@
 use std::os::fd::{FromRawFd, OwnedFd};
 
 use anyhow::Context;
+use caps::CapSet;
 use clap::Parser;
-use foxie_base::sandboxer::ISandboxService;
-use nix::{sys::eventfd::EventFd, unistd::setuid};
+use foxie_base::{sandboxer::ISandboxService, uids};
+use nix::{
+    sys::{eventfd::EventFd, prctl},
+    unistd::{setresuid, setuid},
+};
 
 use crate::{constants::SANDBOXER, service_manager::SERVICE_MANAGER};
 
@@ -32,6 +36,20 @@ fn main() -> anyhow::Result<()> {
                 .context("--ready-event-fd is not valid fd")?,
         ))
     };
+
+    // Service manager dont have any right to the system
+    prctl::set_keepcaps(false).context("Cant ask to retain capability")?;
+    caps::clear(None, CapSet::Ambient).context("Clearining effective capabilities")?;
+    caps::clear(None, CapSet::Bounding).context("Clearining effective capabilities")?;
+    caps::clear(None, CapSet::Inheritable).context("Clearining effective capabilities")?;
+    setresuid(
+        uids::SERVICE_MANAER,
+        uids::SERVICE_MANAER,
+        uids::SERVICE_MANAER,
+    )
+    .context("Cannot drop UID")?;
+    caps::clear(None, CapSet::Permitted).context("Clearining effective capabilities")?;
+    caps::clear(None, CapSet::Effective).context("Clearining effective capabilities")?;
 
     root_dev::discover_root().context("Cannot find root device")?;
 

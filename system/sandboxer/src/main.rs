@@ -21,7 +21,7 @@ use libbinder::{
 use libbinder_basic::{TryFromProxy, packetable::Serde};
 use nix::{
     sys::{eventfd::EventFd, prctl},
-    unistd::setuid,
+    unistd::setresuid,
 };
 use parking_lot::{Condvar, Mutex};
 
@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
         .context("Setting inheritable capability before setuid")?;
     caps::set(None, CapSet::Ambient, &caps::all())
         .context("Setting ambient capability before setuid")?;
-    setuid(uids::SANDBOXER).context("Cannot drop UID")?;
+    setresuid(uids::SANDBOXER, uids::SANDBOXER, uids::SANDBOXER).context("Cannot drop UID")?;
     caps::set(None, CapSet::Effective, &caps::all())
         .context("Cannot restore effective capability after setuid")?;
     caps::set(None, CapSet::Inheritable, &caps::all())
