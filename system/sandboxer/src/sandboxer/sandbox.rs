@@ -28,6 +28,7 @@ use crate::{
 };
 
 pub(super) struct Inner {
+    pub(super) is_destroyed: bool,
     pub(super) id: u64,
     pub(super) cgroup: Dir,
     pub(super) uid: Uid,
@@ -131,6 +132,10 @@ impl Inner {
     // This function must be idempotent
     // it should not try destroy twice
     pub(crate) fn destroy(&mut self) -> anyhow::Result<()> {
+        if self.is_destroyed {
+            return Ok(());
+        }
+
         // Try rm dir the cgroup directory
         super::get_cgroup_dir()
             .remove_dir(&format!("{}", self.id))
@@ -139,6 +144,8 @@ impl Inner {
         // Succesfully destroyed, release the ID
         println!("sandboxer: Destroyed sandbox: {}", self.id);
         SANDBOX_ID_FREE.lock().push_back(self.id);
+
+        self.is_destroyed = true;
         Ok(())
     }
 }
@@ -172,7 +179,7 @@ impl Drop for Sandbox {
 
                     if let Some(e) = err {
                         println!(
-                            "sandboxer: We're shutting down but sandbox {} cannot be destroyed (ignoring after 5 attemps): {e}",
+                            "sandboxer: We're shutting down but sandbox {} cannot be destroyed (ignoring after 5 attemps): {e:#}",
                             sandbox.id
                         );
                     }

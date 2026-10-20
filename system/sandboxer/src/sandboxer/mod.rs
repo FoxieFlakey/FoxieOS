@@ -299,6 +299,7 @@ where
     Ok(Sandbox {
         inner: Some(sandbox::Inner {
             id,
+            is_destroyed: false,
             cgroup: cgroup_dir,
             uid: config.uid,
             mnt_namespace: sandboxed_mnt_namespace,
