@@ -412,6 +412,16 @@ pub fn start_watcher() -> anyhow::Result<()> {
                             service.death_count = 0;
                             service.last_death = Instant::now();
                             service.spawn().context("Spawning service")?;
+                            epoll
+                                .add(
+                                    service.main_pid.as_ref().unwrap().0.as_fd(),
+                                    EpollEvent::new(
+                                        EpollFlags::EPOLLIN | EpollFlags::EPOLLHUP,
+                                        service.id,
+                                    ),
+                                )
+                                .expect("Cannot add service's pidfd into epoll");
+                            epoll_data_to_name_mapper.insert(service.id, name.clone());
                             Ok(())
                         })(),
                         Request::RemoveService(name) => (|| {
