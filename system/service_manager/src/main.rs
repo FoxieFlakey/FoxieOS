@@ -5,6 +5,7 @@ use std::{os::linux::process::CommandExt, process::Command};
 
 use anyhow::Context;
 use foxie_base::sandboxer::ISandboxService;
+use nix::unistd::setuid;
 
 use crate::{
     constants::{SANDBOXER, SANDBOXER_CHILD},
@@ -33,6 +34,9 @@ fn do_main() -> anyhow::Result<()> {
                 .spawn()
                 .context("Cannot spawn sandboxer service")?,
         );
+
+        // Deprivilege service_manager
+        setuid(foxie_base::uids::SERVICE_MANAER).context("Cannot drop privileges")?;
 
         let sandboxer_service =
             foxie_base::service_manager::wait_and_get_service::<dyn ISandboxService>(

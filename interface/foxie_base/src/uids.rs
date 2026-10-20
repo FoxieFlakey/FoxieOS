@@ -1,2 +1,4 @@
-pub const INIT: u32 = 0;
-pub const SERVICE_MANAER: u32 = 1001;
+use nix::unistd::Uid;
+
+pub const INIT: Uid = Uid::from_raw(0);
+pub const SERVICE_MANAER: Uid = Uid::from_raw(1001);
