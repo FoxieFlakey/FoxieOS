@@ -123,6 +123,7 @@ pub fn init() -> anyhow::Result<()> {
 
             // There request incoming
             if !pollfds[1].revents().unwrap().is_empty() {
+                REAPER_WAKE.read().expect("Cannot ackowledge the wakeup");
                 loop {
                     match receiver.try_recv() {
                         Ok(x) => {
