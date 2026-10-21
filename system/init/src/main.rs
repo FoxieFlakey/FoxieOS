@@ -149,7 +149,7 @@ fn do_shutdown() -> ! {
 }
 
 static SHELLS: LazyLock<Mutex<Box<[ShellState]>>> =
-    LazyLock::new(|| Mutex::new(Box::new([ShellState::new("/dev/hvc0")])));
+    LazyLock::new(|| Mutex::new(Box::new([ShellState::new("/dev/hvc1")])));
 static WAKE_SPAWNER: Condvar = Condvar::new();
 static ABNORMAL_RETRY_DURATION: Duration = Duration::from_secs(5);
 static NORMAL_RETRY_DURATION: Duration = Duration::from_secs(1);

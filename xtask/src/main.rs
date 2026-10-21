@@ -74,21 +74,18 @@ fn main() -> anyhow::Result<()> {
                 .arg("-device")
                 .arg("virtio-serial-pci,id=virtio-serial0")
 
-                // Chardev multiplexed with monitor :3
-                // here is port0 which is /dev/hvc0
-                .arg("-chardev")
-                .arg("stdio,id=charconsole0,mux=on,signal=off")
+                // /dev/hvc0
                 .arg("-device")
                 .arg("virtconsole,chardev=charconsole0,id=console0")
-                
-                // Chardev multiplexed with monitor :3
-                // here is port0 which is /dev/hvc0
-                .arg("-chardev")
-                .arg("vc,id=charconsole1")
+
+                // /dev/hvc1
                 .arg("-device")
                 .arg("virtconsole,chardev=charconsole1,id=console1")
 
-                // here is port1 which is /dev/hvc1
+                .arg("-chardev")
+                .arg("stdio,id=charconsole0,mux=on,signal=off")
+                .arg("-chardev")
+                .arg("vc,id=charconsole1")
 
                 .arg("-append")
                 .arg(format!(

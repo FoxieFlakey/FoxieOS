@@ -210,6 +210,7 @@ pub struct Config {
 pub enum Request {
     AddService(Config),
     Start(String),
+    #[expect(unused)]
     Stop(String),
     #[expect(unused)]
     RemoveService(String),

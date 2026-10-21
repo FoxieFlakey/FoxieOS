@@ -1,6 +1,5 @@
 use std::{
     sync::{Arc, OnceLock, Weak},
-    thread::sleep,
     time::Duration,
 };
 
@@ -41,7 +40,7 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
             "--binary".to_string(),
             "/system/busybox_bins/sh".to_string(),
             "--tty-dev".to_string(),
-            "/dev/hvc1".to_string(),
+            "/dev/hvc0".to_string(),
         ],
         uid: Uid::from_raw(0),
         sandbox_profile: sandboxer::Profile::Unconfined,
@@ -52,12 +51,6 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
         graceful_delay: Duration::from_secs(5),
     }))
     .context("Cannot add shell service")?;
-    process_services::send_request(Request::Start("shell".to_string()))
-        .context("Cannot start shell service")?;
-    process_services::send_request(Request::Stop("shell".to_string()))
-        .context("Cannot stop shell service")?;
-
-    sleep(Duration::from_secs(2));
     process_services::send_request(Request::Start("shell".to_string()))
         .context("Cannot start shell service")?;
 
