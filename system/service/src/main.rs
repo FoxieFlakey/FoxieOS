@@ -1,6 +1,6 @@
 use anyhow::{Context, anyhow};
 use clap::{Parser, Subcommand};
-use foxie_base::service_manager::{IServiceManager, iservicemanager};
+use foxie_base::service_registry::{IServiceRegistry, iserviceregistry};
 use libbinder::{ContextManagerInfo, Runtime};
 use libbinder_basic::TryFromProxy;
 
@@ -21,13 +21,13 @@ fn main() -> anyhow::Result<()> {
 
     let runtime = Runtime::new(
         foxie_base::MAIN_BINDER_PATH,
-        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceManager>::try_from_proxy(x)?))),
+        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceRegistry>::try_from_proxy(x)?))),
     )
     .context("Cannot initialize binder runtime")?;
 
     let init = runtime
         .get_manager()
-        .downcast_ref::<iservicemanager::ProxyIServiceManager>()
+        .downcast_ref::<iserviceregistry::ProxyIServiceRegistry>()
         .unwrap();
     let init = init
         .get_ctl()

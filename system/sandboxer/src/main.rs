@@ -11,7 +11,7 @@ use clap::Parser;
 use foxie_base::{
     IObject, iobject,
     sandboxer::{ISandbox, ISandboxService, isandboxservice},
-    service_manager::{IService, IServiceManager, iservice, iservicemanager},
+    service_registry::{IService, IServiceRegistry, iservice, iserviceregistry},
     uids,
 };
 use libbinder::{
@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
 
     let runtime = Runtime::new(
         foxie_base::MAIN_BINDER_PATH,
-        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceManager>::try_from_proxy(x)?))),
+        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceRegistry>::try_from_proxy(x)?))),
     )
     .context("Cannot initialize binder runtime")?;
 
@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
 
     let service_manager = runtime
         .get_manager()
-        .downcast_ref::<iservicemanager::ProxyIServiceManager>()
+        .downcast_ref::<iserviceregistry::ProxyIServiceRegistry>()
         .unwrap();
     let registration_cookie = service_manager
         .register_service(

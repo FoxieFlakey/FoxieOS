@@ -37,8 +37,8 @@ pub enum WaitServiceError {
     PermissionDenied,
 }
 
-#[binder_ipc_object(interface_id = "foxie.IServiceManager")]
-pub trait IServiceManager: IObject {
+#[binder_ipc_object(interface_id = "foxie.IServiceRegistry")]
+pub trait IServiceRegistry: IObject {
     #[must_use = "Service would be automatically unregistred if token dropped"]
     fn register_service(
         &self,
@@ -57,7 +57,7 @@ pub trait IServiceManager: IObject {
 }
 
 pub fn wait_and_get_service<T>(
-    manager: &dyn IServiceManager,
+    manager: &dyn IServiceRegistry,
     service: &str,
 ) -> anyhow::Result<Result<anyhow::Result<Arc<B<T>>>, WaitServiceError>>
 where

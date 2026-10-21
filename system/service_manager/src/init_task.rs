@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context;
 use foxie_base::{
     IObject, iobject, sandboxer,
-    service_manager::{IServiceManagerCtl, ShutdownError, iservicemanagerctl},
+    service_registry::{IServiceManagerCtl, ShutdownError, iservicemanagerctl},
 };
 use libbinder::{
     Runtime,

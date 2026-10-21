@@ -7,7 +7,7 @@ use libbinder_basic::binder_ipc_object;
 pub mod common;
 pub mod impls;
 pub mod sandboxer;
-pub mod service_manager;
+pub mod service_registry;
 pub mod uids;
 pub mod util;
 

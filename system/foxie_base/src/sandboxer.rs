@@ -8,7 +8,7 @@ use crate::{
     IObject,
     common::{SafePidFd, SerdeSignal},
     iobject,
-    service_manager::{IService, iservice},
+    service_registry::{IService, iservice},
 };
 
 #[derive(Serialize, Deserialize, Clone, Copy)]

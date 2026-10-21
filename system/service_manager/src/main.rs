@@ -12,13 +12,13 @@ use nix::{
     unistd::{setresuid, setuid},
 };
 
-use crate::{constants::SANDBOXER, service_manager::SERVICE_MANAGER};
+use crate::{constants::SANDBOXER, services_registry::SERVICE_MANAGER};
 
 mod constants;
 mod init_task;
 mod process_services;
 mod root_dev;
-mod service_manager;
+mod services_registry;
 
 #[derive(Parser)]
 struct Cli {
@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     println!("Root device was found at {}", root_dev::get_root_dev());
     println!("Basic preboot rootfs is ready");
 
-    service_manager::run(|rt| {
+    services_registry::run(|rt| {
         // Deprivilege service_manager
         setuid(foxie_base::uids::SERVICE_MANAER).context("Cannot drop privileges")?;
 
@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
         ready_event_fd.write(1).context("Cannot write to eventfd")?;
 
         let sandboxer_service =
-            foxie_base::service_manager::wait_and_get_service::<dyn ISandboxService>(
+            foxie_base::service_registry::wait_and_get_service::<dyn ISandboxService>(
                 &***SERVICE_MANAGER.get().unwrap(),
                 foxie_base::sandboxer::SERVICE_ID,
             )

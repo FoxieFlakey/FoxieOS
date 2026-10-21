@@ -8,9 +8,9 @@ use foxie_base::{
     IObject, IToken,
     impls::Token,
     iobject,
-    service_manager::{
-        GetServiceManagerCtlError, IService, IServiceManager, IServiceManagerCtl, RegisterError,
-        WaitServiceError, iservicemanager,
+    service_registry::{
+        GetServiceManagerCtlError, IService, IServiceManagerCtl, IServiceRegistry, RegisterError,
+        WaitServiceError, iserviceregistry,
     },
     util::IFnOnce,
 };
@@ -23,7 +23,7 @@ use parking_lot::RwLock;
 
 use crate::init_task;
 
-pub static SERVICE_MANAGER: OnceLock<Arc<B<ServiceManager>>> = OnceLock::new();
+pub static SERVICE_MANAGER: OnceLock<Arc<B<ServiceRegistry>>> = OnceLock::new();
 
 pub fn run<F>(manager_ready: F) -> anyhow::Result<()>
 where
@@ -33,7 +33,7 @@ where
         foxie_base::MAIN_BINDER_PATH,
         ContextManagerInfo::Concrete(Box::new(|rt| {
             Ok(Arc::new_cyclic(|this| {
-                B::new(ServiceManager {
+                B::new(ServiceRegistry {
                     rt: Arc::downgrade(rt),
                     this: this.clone(),
                     state: RwLock::new(State {
@@ -51,7 +51,7 @@ where
         .set(
             runtime
                 .get_manager()
-                .downcast_ref::<ServiceManager>()
+                .downcast_ref::<ServiceRegistry>()
                 .unwrap()
                 .this
                 .upgrade()
@@ -76,13 +76,13 @@ struct Service {
     service: Arc<B<dyn IService>>,
 }
 
-pub struct ServiceManager {
+pub struct ServiceRegistry {
     rt: Weak<Runtime>,
-    this: Weak<B<ServiceManager>>,
+    this: Weak<B<ServiceRegistry>>,
     state: RwLock<State>,
 }
 
-impl ServiceManager {
+impl ServiceRegistry {
     fn unregister(&self, service: &str) {
         let mut state = self.state.write();
         if state.services.contains_key(service) {
@@ -93,16 +93,16 @@ impl ServiceManager {
     }
 }
 
-impl IObject for ServiceManager {
+impl IObject for ServiceRegistry {
     fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
         match name {
-            iservicemanager::ID | iobject::ID => Ok(true),
+            iserviceregistry::ID | iobject::ID => Ok(true),
             _ => Ok(false),
         }
     }
 }
 
-impl IServiceManager for ServiceManager {
+impl IServiceRegistry for ServiceRegistry {
     fn register_service(
         &self,
         name: &str,
@@ -144,7 +144,7 @@ impl IServiceManager for ServiceManager {
         &self,
         name: &str,
         callback: Arc<B<dyn IFnOnce>>,
-    ) -> anyhow::Result<Result<(), Serde<foxie_base::service_manager::WaitServiceError>>> {
+    ) -> anyhow::Result<Result<(), Serde<foxie_base::service_registry::WaitServiceError>>> {
         let mut state = self.state.write();
         if state.is_shutting_down {
             return Ok(Err(Serde(WaitServiceError::PermissionDenied)));
@@ -187,7 +187,7 @@ impl IServiceManager for ServiceManager {
     }
 }
 
-impl ObjectTrait for ServiceManager {
+impl ObjectTrait for ServiceRegistry {
     fn get_remote<'a>(&'a self) -> Option<&'a libbinder::proxy::Proxy> {
         None
     }
@@ -202,6 +202,6 @@ impl ObjectTrait for ServiceManager {
         flags: enumflags2::BitFlags<libbinder::object::Flag>,
         message: &mut libbinder::packet::Packet,
     ) -> Result<Option<(u32, libbinder::packet::Packet)>, libbinder::object::TransactionError> {
-        <dyn IServiceManager>::decode_and_dispatch(self, code, flags, message)
+        <dyn IServiceRegistry>::decode_and_dispatch(self, code, flags, message)
     }
 }
