@@ -13,7 +13,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
-use nix::{sys::signal::Signal, unistd::Uid};
+use nix::sys::signal::Signal;
 use parking_lot::{Condvar, Mutex};
 
 use crate::process_services::{self, Request};
@@ -34,15 +34,11 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
 
     process_services::send_request(Request::AddService(process_services::Config {
         name: "shell".to_string(),
-        binary: "/system/bin/tty_spawner".into(),
+        binary: "/system/busybox_bins/sh".into(),
         arg0: None,
-        argv: vec![
-            "--binary".to_string(),
-            "/system/busybox_bins/sh".to_string(),
-            "--tty-dev".to_string(),
-            "/dev/hvc0".to_string(),
-        ],
-        uid: Uid::from_raw(0),
+        argv: vec![],
+        tty: Some("/dev/hvc0".into()),
+        uid: foxie_base::uids::SHELL,
         sandbox_profile: sandboxer::Profile::Unconfined,
         retry_delay: Duration::from_secs(0),
         retry_count: 5,

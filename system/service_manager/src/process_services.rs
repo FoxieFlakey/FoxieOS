@@ -70,6 +70,7 @@ impl Service {
                 path: self.config.binary.clone(),
                 argv: self.config.argv.clone(),
                 arg0: self.config.arg0.clone(),
+                tty: self.config.tty.clone(),
             }))
             .context("Cannot send transaction to sandboxer for spawning")?
             .context("Cannot spawn service into sandbox")?;
@@ -205,6 +206,7 @@ pub struct Config {
 
     // Capped to be 5 secs long
     pub graceful_delay: Duration,
+    pub tty: Option<String>,
 }
 
 pub enum Request {

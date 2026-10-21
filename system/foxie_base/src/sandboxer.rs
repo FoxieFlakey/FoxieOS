@@ -22,6 +22,7 @@ pub struct SpawnArgs {
     pub path: String,
     pub argv: Vec<String>,
     pub arg0: Option<String>,
+    pub tty: Option<String>,
 }
 
 #[binder_ipc_object(interface_id = "foxie.ISandbox")]

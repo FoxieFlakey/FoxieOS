@@ -24,7 +24,9 @@ use openat::Dir;
 use pidfd_util::PidFdExtFoxie;
 
 use crate::{
-    constants::SANDBOXER_HELPER_PATH, process_handle::ProcessHandle, sandboxer::SANDBOX_ID_FREE,
+    constants::{SANDBOXER_HELPER_PATH, TTY_SPAWNER_PATH},
+    process_handle::ProcessHandle,
+    sandboxer::SANDBOX_ID_FREE,
 };
 
 pub(super) struct Inner {
@@ -72,7 +74,17 @@ impl Sandbox {
 
         // Asking helper to downgrade privilege, mainly because its complicated
         // to do in same process a.k.a very fragile with .pre_exec
-        let mut helper = Command::new(SANDBOXER_HELPER_PATH);
+        let mut helper = if let Some(tty) = &args.tty {
+            let mut cmd = Command::new(TTY_SPAWNER_PATH);
+            cmd.arg("--tty-dev");
+            cmd.arg(tty);
+            cmd.arg("--binary");
+            cmd.arg(SANDBOXER_HELPER_PATH);
+            cmd.arg("--");
+            cmd
+        } else {
+            Command::new(TTY_SPAWNER_PATH)
+        };
 
         helper.arg("--procs-fd");
         helper.arg(format!("{}", procs_fd.as_raw_fd()));
