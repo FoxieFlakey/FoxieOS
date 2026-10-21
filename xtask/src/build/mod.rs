@@ -12,7 +12,7 @@ pub struct BuildArgs {}
 
 static CRATES: &[&str] = &[
     "init",
-    "initctl",
+    "service",
     "sandbox_helper",
     "service_manager",
     "tty_spawner",
