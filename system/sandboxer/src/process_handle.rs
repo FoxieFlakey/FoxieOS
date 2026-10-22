@@ -1,20 +1,32 @@
-use std::{os::linux::process::PidFd, sync::Weak};
+use std::{
+    os::linux::process::PidFd,
+    sync::{Arc, Weak},
+};
 
 use anyhow::{Context, anyhow};
 use foxie_base::{
     IObject,
-    common::SerdeSignal,
+    common::{SerdePid, SerdeSignal},
     iobject,
-    sandboxer::{IProcessHandle, iprocesshandle},
+    sandboxer::{ExitReason, IProcessHandle, iprocesshandle},
     uids,
+    util::IFnOnce,
 };
-use libbinder::{Runtime, object::ObjectTrait};
+use libbinder::{
+    Runtime,
+    object::{B, ObjectTrait},
+};
 use libbinder_basic::packetable::Serde;
+use nix::unistd::Pid;
+use parking_lot::Mutex;
 use pidfd_util::PidFdExtFoxie;
 
 pub struct ProcessHandle {
+    pub death_reason: Mutex<Option<ExitReason>>,
+    pub pid: Pid,
     pub pidfd: PidFd,
     pub rt: Weak<Runtime>,
+    pub death_listeners: Mutex<Vec<Arc<B<dyn IFnOnce>>>>,
 }
 
 impl ObjectTrait for ProcessHandle {
@@ -47,6 +59,17 @@ impl IObject for ProcessHandle {
 }
 
 impl IProcessHandle for ProcessHandle {
+    fn get_pid(&self) -> anyhow::Result<foxie_base::common::SerdePid> {
+        Ok(SerdePid(self.pid))
+    }
+
+    fn get_exit_reason(&self) -> anyhow::Result<anyhow::Result<Serde<Option<ExitReason>>>> {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
+        Ok(Ok(Serde(self.death_reason.lock().clone())))
+    }
+
     fn send_signal(&self, signal: SerdeSignal) -> anyhow::Result<anyhow::Result<Serde<()>>> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
@@ -57,5 +80,22 @@ impl IProcessHandle for ProcessHandle {
             .send_signal(signal.0)
             .with_context(|| format!("Cannot send {} this process handle", signal.0.as_str()))
             .map(|()| Serde(())))
+    }
+
+    fn on_death(&self, callback: Arc<B<dyn IFnOnce>>) -> anyhow::Result<anyhow::Result<()>> {
+        if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
+            return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
+        }
+
+        let guard = self.death_reason.lock();
+        if guard.is_some() {
+            // Best effort only
+            let _ = callback.call();
+            return Ok(Ok(()));
+        }
+
+        self.death_listeners.lock().push(callback);
+        drop(guard);
+        Ok(Ok(()))
     }
 }

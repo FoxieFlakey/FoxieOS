@@ -1,4 +1,3 @@
-#![feature(linux_pidfd)]
 #![feature(oneshot_channel)]
 
 use libbinder::object::{B, ObjectTrait};

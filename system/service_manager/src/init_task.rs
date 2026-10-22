@@ -1,5 +1,6 @@
 use std::{
     sync::{Arc, OnceLock, Weak},
+    thread::sleep,
     time::Duration,
 };
 
@@ -16,7 +17,7 @@ use libbinder_basic::packetable::Serde;
 use nix::sys::signal::Signal;
 use parking_lot::{Condvar, Mutex};
 
-use crate::process_services::{self, Request};
+use crate::service_manager::{self, service::Service};
 
 pub static INIT: OnceLock<Arc<B<dyn IServiceManagerCtl>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
@@ -30,9 +31,8 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
     .unwrap();
 
     // Starting the process service manager (not binder)
-    process_services::start_watcher().context("Cannot start process service manager")?;
-
-    process_services::send_request(Request::AddService(process_services::Config {
+    service_manager::init(runtime.clone());
+    let shell_service = Service::new(service_manager::service::Config {
         name: "shell".to_string(),
         binary: "/system/busybox_bins/sh".into(),
         arg0: None,
@@ -45,10 +45,13 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
         retry_window: Duration::from_mins(2),
         graceful_signal: Signal::SIGTERM,
         graceful_delay: Duration::from_secs(5),
-    }))
-    .context("Cannot add shell service")?;
-    process_services::send_request(Request::Start("shell".to_string()))
-        .context("Cannot start shell service")?;
+    });
+
+    shell_service.start().context("Cannot start shell")?;
+    sleep(Duration::from_secs(1));
+    shell_service.stop().context("Cannot stop shell")?;
+    sleep(Duration::from_secs(10));
+    shell_service.start().context("Cannot start shell")?;
 
     Ok(())
 }

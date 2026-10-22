@@ -2,10 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     ffi::CString,
     fs,
-    os::{fd::AsFd, linux::process::PidFd},
+    os::fd::AsFd,
     path::Path,
     sync::{
-        LazyLock, OnceLock, Weak,
+        Arc, LazyLock, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, TryRecvError},
     },
@@ -14,6 +14,8 @@ use std::{
 };
 
 use anyhow::Context;
+use foxie_base::{common::SerdeSignal, sandboxer::ExitReason};
+use libbinder::object::B;
 use nix::{
     errno::Errno,
     fcntl::{OFlag, open},
@@ -30,8 +32,12 @@ use nix::{
 };
 use openat::Dir;
 use parking_lot::{Mutex, RwLock};
+use pidfd_util::PidFdExtFoxie;
 
-use crate::{constants::SANDBOXER_CGROUP_DIR, root_dev, sandboxer::sandbox::Sandbox};
+use crate::{
+    constants::SANDBOXER_CGROUP_DIR, process_handle::ProcessHandle, root_dev,
+    sandboxer::sandbox::Sandbox,
+};
 
 pub mod sandbox;
 
@@ -58,7 +64,7 @@ static SANDBOX_DESTROYING_QUEUE: RwLock<Option<mpsc::Sender<sandbox::Inner>>> = 
 static BACKGROUND_THRD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 static REAPER_THRD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
-static REAPER_QUEUE: RwLock<Option<mpsc::Sender<PidFd>>> = RwLock::new(None);
+static REAPER_QUEUE: RwLock<Option<mpsc::Sender<Arc<B<ProcessHandle>>>>> = RwLock::new(None);
 static REAPER_WAKE: LazyLock<EventFd> =
     LazyLock::new(|| EventFd::from_value_and_flags(0, EfdFlags::EFD_CLOEXEC).unwrap());
 
@@ -77,11 +83,11 @@ pub fn init() -> anyhow::Result<()> {
         .set(Dir::open(SANDBOXER_CGROUP_DIR).context("Cannot open cgroup dir")?)
         .expect("Should not be initialized already");
 
-    let (sender, receiver) = mpsc::channel::<PidFd>();
+    let (sender, receiver) = mpsc::channel::<Arc<B<ProcessHandle>>>();
     let reaper = thread::spawn(move || {
         prctl::set_name(&CString::new("Reaper").unwrap()).expect("Cannot rename reapear thread");
 
-        let mut watched: HashMap<u64, PidFd> = HashMap::new();
+        let mut watched: HashMap<u64, Arc<B<ProcessHandle>>> = HashMap::new();
         let mut id = 0;
 
         let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC).expect("Cannot create epoll");
@@ -111,13 +117,36 @@ pub fn init() -> anyhow::Result<()> {
 
                 for event in &events[0..count] {
                     // Do reap
-                    let pidfd = watched
+                    let process = watched
                         .remove(&event.data())
                         .expect("There should be pidfd here");
                     epoll
-                        .delete(pidfd.as_fd())
+                        .delete(process.pidfd.as_fd())
                         .expect("Cannot remove pidfd from epoll");
-                    pidfd.wait().expect("Cannot reap process");
+
+                    process.pidfd.wait().expect("Cannot reap process");
+                    let mut death_reason = process.death_reason.lock();
+                    match process
+                        .pidfd
+                        .get_termination_reason()
+                        .expect("Cannot get termination reason")
+                    {
+                        nix::sys::wait::WaitStatus::Exited(_, code) => {
+                            *death_reason = Some(ExitReason::Exit(code));
+                        }
+                        nix::sys::wait::WaitStatus::Signaled(_, signal, _) => {
+                            *death_reason = Some(ExitReason::Signal(SerdeSignal(signal)));
+                        }
+                        _ => unreachable!(),
+                    }
+
+                    // Wake up listeners
+                    for listener in process.death_listeners.lock().drain(..) {
+                        // Best effort only
+                        let _ = listener.call();
+                    }
+
+                    drop(death_reason);
                 }
             }
 
@@ -128,7 +157,7 @@ pub fn init() -> anyhow::Result<()> {
                     match receiver.try_recv() {
                         Ok(x) => {
                             epoll
-                                .add(x.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, id))
+                                .add(x.pidfd.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, id))
                                 .expect("Cannot add new pidfd to be watched");
 
                             // New PID to watch for

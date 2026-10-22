@@ -597,6 +597,7 @@ dependencies = [
  "openat",
  "parking_lot",
  "pidfd-util",
+ "thiserror",
 ]
 
 [[package]]

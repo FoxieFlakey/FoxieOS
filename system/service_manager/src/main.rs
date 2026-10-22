@@ -1,5 +1,5 @@
-#![feature(linux_pidfd)]
 #![feature(oneshot_channel)]
+#![feature(once_cell_try)]
 
 use std::os::fd::{FromRawFd, OwnedFd};
 
@@ -16,8 +16,8 @@ use crate::{constants::SANDBOXER, services_registry::SERVICE_MANAGER};
 
 mod constants;
 mod init_task;
-mod process_services;
 mod root_dev;
+mod service_manager;
 mod services_registry;
 
 #[derive(Parser)]

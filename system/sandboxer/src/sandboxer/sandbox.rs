@@ -11,16 +11,15 @@ use std::{
 use anyhow::{Context, anyhow};
 use command_fds::CommandFdExt;
 use foxie_base::{
-    IObject,
-    common::SafePidFd,
-    iobject,
+    IObject, iobject,
     sandboxer::{IProcessHandle, ISandbox, SpawnArgs, isandbox},
     uids,
 };
 use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::packetable::Serde;
-use nix::unistd::{Uid, sleep};
+use nix::unistd::{Pid, Uid, sleep};
 use openat::Dir;
+use parking_lot::Mutex;
 use pidfd_util::PidFdExtFoxie;
 
 use crate::{
@@ -57,10 +56,7 @@ impl Sandbox {
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
-    fn spawn(
-        &self,
-        args: Serde<SpawnArgs>,
-    ) -> anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)> {
+    fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<Arc<B<dyn IProcessHandle>>> {
         let procs_fd = self
             .get_inner()
             .cgroup
@@ -77,7 +73,7 @@ impl Sandbox {
         let mut helper = if let Some(tty) = &args.tty {
             let mut cmd = Command::new(TTY_SPAWNER_PATH);
             cmd.arg("--tty-dev");
-            cmd.arg(tty);
+            cmd.arg(&**tty);
             cmd.arg("--binary");
             cmd.arg(SANDBOXER_HELPER_PATH);
             cmd.arg("--");
@@ -93,14 +89,14 @@ impl Sandbox {
         helper.arg("--root-fd");
         helper.arg(format!("{}", root_fd.as_raw_fd()));
         helper.arg("--binary");
-        helper.arg(&args.path);
+        helper.arg(&*args.path);
         helper.arg("--uid");
         helper.arg(format!("{}", self.get_inner().uid));
         helper.arg("--gid");
         helper.arg(format!("{}", self.get_inner().uid));
         if let Some(arg0) = &args.arg0 {
             helper.arg("--arg0");
-            helper.arg(arg0);
+            helper.arg(&**arg0);
         }
         helper.arg("--");
         helper.args(&args.argv);
@@ -117,26 +113,25 @@ impl Sandbox {
             .ok()
             .expect("Already requested for pidfd...");
 
-        // We create second PidFd instance to be used by reaper
+        let handle = Arc::new(B::new(ProcessHandle {
+            pidfd: pidfd.dup().context("Cannot dup pidfd")?,
+            death_reason: Mutex::new(None),
+            death_listeners: Mutex::new(vec![]),
+            pid: Pid::from_raw(pid as nix::libc::pid_t),
+            rt: self.binder_runtime.clone(),
+        }));
+
         super::REAPER_QUEUE
             .read()
             .as_ref()
             .unwrap()
-            .send(pidfd.dup().context("Cannot dup pidfd")?)
+            .send(handle.clone())
             .expect("Cannot send pidfd to sandboxer's reaper to be watched");
         super::REAPER_WAKE
             .write(1)
             .expect("Cannot wake up sandboxer's reaper");
 
-        let handle = ProcessHandle {
-            pidfd: pidfd.dup().context("Cannot dup pidfd")?,
-            rt: self.binder_runtime.clone(),
-        };
-        Ok((
-            pidfd.into(),
-            Arc::new(B::new(handle)),
-            pid as nix::libc::pid_t,
-        ))
+        Ok(handle)
     }
 }
 
@@ -243,8 +238,7 @@ impl ISandbox for Sandbox {
     fn spawn(
         &self,
         spawn_args: Serde<SpawnArgs>,
-    ) -> anyhow::Result<anyhow::Result<(SafePidFd, Arc<B<dyn IProcessHandle>>, nix::libc::pid_t)>>
-    {
+    ) -> anyhow::Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }
