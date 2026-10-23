@@ -21,8 +21,30 @@ pub fn run() -> anyhow::Result<()> {
         graceful_signal: Signal::SIGTERM,
         graceful_delay: Duration::from_secs(5),
         start_timeout: Duration::from_secs(20),
-        ready_eventfd_arg: Some("-s".into()),
+        ready_eventfd_arg: None,
     });
+
+    let graphics_server_ervice = Service::new(service_manager::service::Config {
+        name: "GraphicsServer".to_string(),
+        binary: "/system/bin/graphics_server".into(),
+        arg0: None,
+        argv: vec![],
+        tty: None,
+        uid: foxie_base::uids::GRAPHICS_SERVER,
+        sandbox_profile: sandboxer::Profile::Unconfined,
+        retry_delay: Duration::from_millis(500),
+        retry_count: 3,
+        retry_window: Duration::from_mins(2),
+        graceful_signal: Signal::SIGTERM,
+        graceful_delay: Duration::from_secs(5),
+        start_timeout: Duration::from_secs(2),
+        ready_eventfd_arg: Some("--ready-event-fd".into()),
+    });
+
+    graphics_server_ervice
+        .ensure_started()
+        .context("Cannot wait until graphic server started")?;
+    println!("Graphics server started!");
 
     shell_service
         .ensure_started()

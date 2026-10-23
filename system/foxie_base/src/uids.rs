@@ -12,6 +12,7 @@ pub const SERVICE_MANAER: Uid = Uid::from_raw(1001);
 // reliable and defaults to 0 on some cases. So should be nonzero
 // if checking prvilege by UID
 pub const SHELL: Uid = Uid::from_raw(1002);
+pub const GRAPHICS_SERVER: Uid = Uid::from_raw(1003);
 
 pub fn can_access_sandboxer(uid: Uid) -> bool {
     // Sandboxer has no business of creating/whatever own
