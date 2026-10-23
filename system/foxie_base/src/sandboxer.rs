@@ -1,7 +1,11 @@
-use std::{borrow::Cow, fmt::Display, sync::Arc};
+use std::{borrow::Cow, fmt::Display, os::fd::OwnedFd, sync::Arc};
 
+use anyhow::Context;
 use libbinder::object::{B, ObjectTrait};
-use libbinder_basic::{binder_ipc_object, packetable::Serde};
+use libbinder_basic::{
+    binder_ipc_object,
+    packetable::{Packetable, Serde},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -18,12 +22,56 @@ pub enum Profile {
     App,
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct SpawnArgs<'a> {
     pub path: Cow<'a, str>,
     pub argv: Vec<String>,
     pub arg0: Option<Cow<'a, str>>,
     pub tty: Option<Cow<'a, str>>,
+    // These will be prepended first to argv
+    pub fd_args: Vec<(String, OwnedFd)>,
+}
+
+impl<'a> Packetable<'a> for SpawnArgs<'a> {
+    fn serialize(&self, mut writer: &mut libbinder_basic::writer::Writer) -> anyhow::Result<()> {
+        serde::Serialize::serialize(&self.path, &mut writer).context("Cannot serialize 'path'")?;
+        serde::Serialize::serialize(&self.argv, &mut writer).context("Cannot serialize 'argv'")?;
+        serde::Serialize::serialize(&self.arg0, &mut writer).context("Cannot serialize 'arg0'")?;
+        serde::Serialize::serialize(&self.tty, &mut writer).context("Cannot serialize 'tty'")?;
+        Packetable::serialize(&self.fd_args.len(), &mut writer)
+            .context("Cannot serialize fd_args len")?;
+
+        for v in self.fd_args.iter() {
+            Packetable::serialize(v, &mut writer).context("Cannot serialize fd args")?;
+        }
+        Ok(())
+    }
+
+    fn deserialize(mut reader: &mut libbinder_basic::reader::Reader<'a>) -> anyhow::Result<Self> {
+        let path =
+            serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'path'")?;
+        let argv =
+            serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'argv'")?;
+        let arg0 =
+            serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'arg0'")?;
+        let tty =
+            serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'tty'")?;
+
+        let len = Packetable::deserialize(&mut reader).context("Cannot read length of fd_args")?;
+        let mut fd_args = Vec::with_capacity(len);
+
+        for _ in 0..len {
+            fd_args
+                .push(Packetable::deserialize(&mut reader).context("Cannot deserialize fd args")?);
+        }
+
+        Ok(Self {
+            path,
+            argv,
+            arg0,
+            tty,
+            fd_args,
+        })
+    }
 }
 
 #[binder_ipc_object(interface_id = "foxie.ISandbox")]
@@ -31,7 +79,7 @@ pub trait ISandbox: IObject {
     fn kill_all(&self) -> anyhow::Result<anyhow::Result<Serde<()>>>;
     fn spawn(
         &self,
-        spawn_args: Serde<SpawnArgs>,
+        spawn_args: SpawnArgs,
     ) -> anyhow::Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>>;
 }
 

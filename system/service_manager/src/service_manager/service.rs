@@ -42,6 +42,11 @@ pub struct Config {
     // Capped to be 5 secs long
     pub graceful_delay: Duration,
     pub tty: Option<String>,
+
+    // Whether service opt in to use eventfd to be ready. If yes
+    // two new arg added to argv prepended, so [0] is this
+    // and [1] is the fd where its resided
+    pub ready_eventfd_arg: Option<String>,
 }
 
 impl Config {

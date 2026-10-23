@@ -57,7 +57,7 @@ impl Sandbox {
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
-    fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<Arc<B<dyn IProcessHandle>>> {
+    fn spawn(&self, args: SpawnArgs) -> anyhow::Result<Arc<B<dyn IProcessHandle>>> {
         let procs_fd = retry_eintr(|| self.get_inner().cgroup.write_file("cgroup.procs", 0o600))
             .context("Cannot open cgroup.procs")
             .map(OwnedFd::from)?;
@@ -97,9 +97,17 @@ impl Sandbox {
             helper.arg(&**arg0);
         }
         helper.arg("--");
+
+        for fd_arg in &args.fd_args {
+            helper.arg(&fd_arg.0);
+            helper.arg(format!("{}", fd_arg.1.as_raw_fd()));
+        }
         helper.args(&args.argv);
 
-        helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
+        let mut preserved_fds = vec![procs_fd, mnt_namespace_fd, root_fd];
+        preserved_fds.extend(args.fd_args.into_iter().map(|x| x.1));
+
+        helper.preserved_fds(preserved_fds);
         helper.create_pidfd(true);
 
         let child = retry_eintr(|| helper.spawn())
@@ -231,7 +239,7 @@ impl ISandbox for Sandbox {
 
     fn spawn(
         &self,
-        spawn_args: Serde<SpawnArgs>,
+        spawn_args: SpawnArgs,
     ) -> anyhow::Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));

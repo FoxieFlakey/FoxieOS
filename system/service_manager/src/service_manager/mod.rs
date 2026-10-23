@@ -23,6 +23,7 @@ use nix::{
         timer::{Expiration, TimerSetTimeFlags},
         timerfd::{ClockId, TimerFd, TimerFlags},
     },
+    unistd::dup,
 };
 use parking_lot::{Mutex, Once};
 
@@ -148,6 +149,23 @@ fn manager_thread() {
             config: service::Config,
         ) -> ServiceStateFull {
             println!("service_manager: Starting service '{}'", config.name);
+            let ready_fd =
+                retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service ready");
+            // SAFETY: Just dup the fd
+            let ready_fd_for_service = unsafe {
+                EventFd::from_owned_fd(
+                    retry_eintr(|| dup(ready_fd.as_fd()))
+                        .expect("Cannot create event fd for service ready"),
+                )
+            };
+
+            let mut fd_args = Vec::new();
+            if let Some(x) = config.ready_eventfd_arg.clone() {
+                fd_args.push((x, ready_fd_for_service.into()));
+            } else {
+                // Service dont support ready notification
+                retry_eintr(|| ready_fd.write(1)).expect("Cannot fire ready_fd");
+            }
 
             let sandbox = get_sandboxer()
                 .create_sandbox(Serde(sandboxer::Config {
@@ -157,16 +175,15 @@ fn manager_thread() {
                 .flatten()
                 .expect("Cannot create sandbox");
             let handle = sandbox
-                .spawn(Serde(SpawnArgs {
+                .spawn(SpawnArgs {
                     path: config.binary.as_str().into(),
                     argv: config.argv.clone(),
                     arg0: config.arg0.as_ref().map(|x| x.as_str().into()),
                     tty: config.tty.as_ref().map(|x| x.as_str().into()),
-                }))
+                    fd_args,
+                })
                 .flatten()
                 .expect("Cannot start service");
-            let ready_fd =
-                retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service ready");
             let exit_fd = Arc::new(
                 retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service exit"),
             );
@@ -179,9 +196,6 @@ fn manager_thread() {
                 }))
                 .flatten()
                 .expect("Cannot register death listener for service's process");
-
-            // Currently havent passed it to service yet about ready status
-            retry_eintr(|| ready_fd.write(1)).expect("Cannot fire ready_fd");
 
             let start_timed_out =
                 retry_eintr(|| TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC))

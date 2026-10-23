@@ -16,7 +16,7 @@ use foxie_base::{
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectFlags, ObjectTrait},
 };
 use libbinder_basic::{TryFromProxy, packetable::Serde};
 use nix::{
@@ -170,7 +170,13 @@ impl ISandboxService for Ctl {
         );
 
         match ret {
-            Ok(x) => Ok(Ok(Arc::new(B::new(x)))),
+            Ok(x) => Ok(Ok(Arc::new(B::new_with_flags(
+                x,
+                ObjectFlags {
+                    accept_fds: true,
+                    ..Default::default()
+                },
+            )))),
             Err(e) => Ok(Err(e)),
         }
     }

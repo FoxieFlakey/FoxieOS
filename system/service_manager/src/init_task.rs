@@ -45,28 +45,9 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
         retry_window: Duration::from_mins(2),
         graceful_signal: Signal::SIGTERM,
         graceful_delay: Duration::from_secs(5),
-        start_timeout: Duration::from_secs(10),
+        start_timeout: Duration::from_secs(20),
+        ready_eventfd_arg: Some("-s".to_string()),
     });
-
-    let timeout_service = Service::new(service_manager::service::Config {
-        name: "timeout test".to_string(),
-        binary: "/system/busybox_bins/sleep".into(),
-        arg0: None,
-        argv: vec!["5".to_string()],
-        tty: None,
-        uid: foxie_base::uids::SHELL,
-        sandbox_profile: sandboxer::Profile::Unconfined,
-        retry_delay: Duration::from_secs(0),
-        retry_count: 5,
-        retry_window: Duration::from_mins(2),
-        graceful_signal: Signal::SIGTERM,
-        graceful_delay: Duration::from_secs(5),
-        start_timeout: Duration::from_secs(2),
-    });
-
-    timeout_service
-        .start()
-        .expect("Cannot start timeout service");
 
     shell_service.start().context("Cannot start shell")?;
     sleep(Duration::from_secs(1));
