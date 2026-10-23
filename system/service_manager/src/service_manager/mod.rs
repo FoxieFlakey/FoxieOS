@@ -680,6 +680,8 @@ fn manager_thread() {
                         unreachable!("Service has to be 'starting'")
                     };
 
+                    println!("service_manager: Service '{}' is started", config.name);
+
                     retry_eintr(|| epoll.delete(notifier.as_fd()))
                         .expect("Cannot remove started eventfd");
 
