@@ -193,6 +193,8 @@ impl CrashDetail {
 pub enum RequestError {
     #[error("Service is deleted")]
     ServiceIsDeleted,
+    #[error("System is shutting down")]
+    SystemIsShuttingDown,
 }
 
 impl Service {
@@ -204,6 +206,7 @@ impl Service {
             .expect("Manager isnt initialized")
             .state
             .lock();
+
         let svc = Arc::new(Self {
             id: manager_state.free_id,
             state: Mutex::new((

@@ -13,7 +13,9 @@ use nix::{
     unistd::{setresuid, setuid},
 };
 
-use crate::{constants::SANDBOXER, services_registry::SERVICE_MANAGER};
+use crate::{
+    constants::SANDBOXER, service_manager::get_manager, services_registry::SERVICE_MANAGER,
+};
 
 mod constants;
 mod init_task;
@@ -99,6 +101,7 @@ fn main() -> anyhow::Result<()> {
         init_task::run(rt).context("Running init tasks")?;
 
         init_task::DO_SHUTDOWN_COND.wait_while(&mut init_task::DO_SHUTDOWN.lock(), |x| *x != true);
+        get_manager().shutdown();
 
         // Telling init that we want to shutdown
         // so it knows that some process that exited :3

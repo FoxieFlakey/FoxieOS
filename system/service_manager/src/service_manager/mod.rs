@@ -3,8 +3,8 @@ use std::{
     mem,
     os::fd::AsFd,
     sync::{Arc, OnceLock, Weak},
-    thread::{self},
-    time::Instant,
+    thread::{self, sleep},
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -25,7 +25,7 @@ use nix::{
     },
     unistd::dup,
 };
-use parking_lot::{Mutex, Once};
+use parking_lot::{Condvar, Mutex, Once};
 
 use crate::{
     constants::get_sandboxer,
@@ -39,6 +39,8 @@ pub mod service;
 pub struct ServiceManager {
     rt: Weak<Runtime>,
     state: Mutex<State>,
+    shutted_down: Mutex<bool>,
+    shutted_down_changed: Condvar,
     wake_up: EventFd,
 }
 
@@ -55,6 +57,7 @@ enum Request {
 
 struct State {
     services: HashMap<u32, Arc<Service>>,
+    shutting_down: bool,
     free_id: u32,
     reqs: VecDeque<Request>,
 }
@@ -75,6 +78,21 @@ pub fn get_manager() -> &'static ServiceManager {
 }
 
 impl ServiceManager {
+    pub fn shutdown(&self) {
+        let mut state = self.state.lock();
+        state.shutting_down = true;
+        let mut reqs = mem::take(&mut state.reqs);
+        for service in state.services.values() {
+            reqs.push_back(Request::Stop(service.clone(), Box::new(|_| {})));
+        }
+        state.reqs = reqs;
+        retry_eintr(|| self.wake_up.write(1)).expect("Cannot wake up manager thread");
+        drop(state);
+
+        self.shutted_down_changed
+            .wait_while(&mut self.shutted_down.lock(), |&mut x| x == false);
+    }
+
     fn enqueue_req(&self, req: Request) {
         self.state.lock().reqs.push_back(req);
         retry_eintr(|| self.wake_up.write(1)).expect("Cannot wake up manager thread");
@@ -89,10 +107,13 @@ pub fn init(rt: Arc<Runtime>) {
                     rt: Arc::downgrade(&rt),
                     state: Mutex::new(State {
                         services: HashMap::new(),
+                        shutting_down: false,
                         free_id: 2398878931,
                         reqs: VecDeque::new(),
                     }),
                     wake_up: EventFd::new().context("Cannot create wakeup fd")?,
+                    shutted_down: Mutex::new(false),
+                    shutted_down_changed: Condvar::new(),
                 })
             })
             .expect("Cannot initialize service manager");
@@ -143,11 +164,24 @@ fn manager_thread() {
 
         fn do_starting(
             rt: &Weak<Runtime>,
+            is_shutting_down: bool,
             epoll: &Epoll,
             service: &Service,
             crash_detail: CrashDetail,
             config: service::Config,
         ) -> ServiceStateFull {
+            if is_shutting_down {
+                println!(
+                    "service_manager: Refused to start service '{}' because system shutting down",
+                    config.name
+                );
+
+                return ServiceStateFull::Stopped {
+                    config,
+                    crash_detail,
+                };
+            }
+
             println!("service_manager: Starting service '{}'", config.name);
             let ready_fd =
                 retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service ready");
@@ -254,6 +288,7 @@ fn manager_thread() {
         }
 
         fn do_restarting(
+            is_shutting_down: bool,
             sandbox: Arc<B<dyn ISandbox>>,
             epoll: &Epoll,
             service: &Service,
@@ -283,7 +318,8 @@ fn manager_thread() {
                     (starting_since.elapsed() - started_since.elapsed()).as_secs_f32()
                 ),
             };
-            if crash_detail.is_allowed_to_restart() {
+
+            if crash_detail.is_allowed_to_restart() && !is_shutting_down {
                 println!(
                     "service_manager: Service '{}' crashed with {reason}, retrying in {:.3} secs (fails {} times){}",
                     config.name,
@@ -321,8 +357,13 @@ fn manager_thread() {
                 }
             } else {
                 println!(
-                    "service_manager: Service '{}' crashed with {reason}, wont restarting (fails {} times)",
+                    "service_manager: Service '{}' crashed with {reason}, wont restarting{} (fails {} times)",
                     config.name,
+                    if is_shutting_down {
+                        "due system is shutting down"
+                    } else {
+                        ""
+                    },
                     crash_detail.crash_count()
                 );
 
@@ -356,7 +397,7 @@ fn manager_thread() {
                 started_since
                     .map(|x| format!(
                         " and {:.2} secs starting",
-                        (x.elapsed() - starting_since.elapsed()).as_secs_f32()
+                        (starting_since.elapsed() - x.elapsed()).as_secs_f32()
                     ))
                     .unwrap_or(String::new())
             );
@@ -404,6 +445,7 @@ fn manager_thread() {
 
         let mut manager_lock = manager.state.lock();
         let rt = &manager.rt;
+        let is_shutting_down = manager_lock.shutting_down;
         for event in &buf[0..count] {
             let kind = event.data() & !u64::from(u32::MAX);
             if kind == TYPE_WAKEUP_FD {
@@ -552,7 +594,14 @@ fn manager_thread() {
                                     config,
                                     crash_detail,
                                     ..
-                                } => Ok(do_starting(rt, &epoll, &service, crash_detail, config)),
+                                } => Ok(do_starting(
+                                    rt,
+                                    is_shutting_down,
+                                    &epoll,
+                                    &service,
+                                    crash_detail,
+                                    config,
+                                )),
                                 ServiceStateFull::WaitingToRestart {
                                     config,
                                     crash_detail,
@@ -563,7 +612,14 @@ fn manager_thread() {
                                     retry_eintr(|| epoll.delete(retry_timer.as_fd()))
                                         .expect("Cannot remove timerfd for restarting");
 
-                                    Ok(do_starting(rt, &epoll, &service, crash_detail, config))
+                                    Ok(do_starting(
+                                        rt,
+                                        is_shutting_down,
+                                        &epoll,
+                                        &service,
+                                        crash_detail,
+                                        config,
+                                    ))
                                 }
                                 ServiceStateFull::Stopping {
                                     action_after_stopped:
@@ -608,7 +664,8 @@ fn manager_thread() {
                                                     | ActionAfterStopped::Start,
                                                 ..
                                             } | ServiceStateFull::Starting { .. }
-                                                | ServiceStateFull::Started { .. },
+                                                | ServiceStateFull::Started { .. }
+                                                | ServiceStateFull::Stopped { .. },
                                         ),
                                         "Next state suppose be stoping with start_on_stop or starting or started"
                                     );
@@ -616,7 +673,11 @@ fn manager_thread() {
                                     state.1.call_all(());
                                     drop(state);
 
-                                    fn_once(Ok(()));
+                                    if is_shutting_down {
+                                        fn_once(Err(RequestError::SystemIsShuttingDown));
+                                    } else {
+                                        fn_once(Ok(()));
+                                    }
                                 }
                                 Err(e) => {
                                     drop(state);
@@ -771,7 +832,8 @@ fn manager_thread() {
 
                     println!("service_manager: Restarting '{}'", config.name);
 
-                    state.0 = do_starting(rt, &epoll, &service, crash_detail, config);
+                    state.0 =
+                        do_starting(rt, is_shutting_down, &epoll, &service, crash_detail, config);
                     state.1.call_all(());
                 }
                 TYPE_SERVICE_DEATH => {
@@ -801,6 +863,7 @@ fn manager_thread() {
                                 .expect("Service should already exited");
 
                             do_restarting(
+                                is_shutting_down,
                                 sandbox,
                                 &epoll,
                                 service,
@@ -831,6 +894,7 @@ fn manager_thread() {
                                 .expect("Service should already exited");
 
                             do_restarting(
+                                is_shutting_down,
                                 sandbox,
                                 &epoll,
                                 service,
@@ -897,6 +961,7 @@ fn manager_thread() {
                                         crash_detail,
                                     },
                                     ActionAfterStopped::Restart => do_restarting(
+                                        is_shutting_down,
                                         sandbox,
                                         &epoll,
                                         service,
@@ -906,9 +971,14 @@ fn manager_thread() {
                                         Some(starting_since),
                                         started_since,
                                     ),
-                                    ActionAfterStopped::Start => {
-                                        do_starting(rt, &epoll, &service, crash_detail, config)
-                                    }
+                                    ActionAfterStopped::Start => do_starting(
+                                        rt,
+                                        is_shutting_down,
+                                        &epoll,
+                                        &service,
+                                        crash_detail,
+                                        config,
+                                    ),
                                 }
                             } else {
                                 println!(
@@ -924,6 +994,7 @@ fn manager_thread() {
                                         exit_reason: reason,
                                     },
                                     ActionAfterStopped::Restart => do_restarting(
+                                        is_shutting_down,
                                         sandbox,
                                         &epoll,
                                         service,
@@ -933,9 +1004,14 @@ fn manager_thread() {
                                         Some(starting_since),
                                         started_since,
                                     ),
-                                    ActionAfterStopped::Start => {
-                                        do_starting(rt, &epoll, &service, crash_detail, config)
-                                    }
+                                    ActionAfterStopped::Start => do_starting(
+                                        rt,
+                                        is_shutting_down,
+                                        &epoll,
+                                        &service,
+                                        crash_detail,
+                                        config,
+                                    ),
                                 }
                             }
                         }
@@ -962,6 +1038,56 @@ fn manager_thread() {
                 _ => unreachable!("Unknown kind"),
             }
         }
+
+        if is_shutting_down {
+            // keep checking if all services are down. no new starting can be added
+            // if there started, enqueue generated Stop
+
+            let mut reqs = mem::take(&mut manager_lock.reqs);
+            let mut stop_count = 0;
+            for svc in manager_lock.services.values() {
+                match &svc.state.lock().0 {
+                    // These would started so lets queue keep spamming stop
+                    ServiceStateFull::Starting { .. }
+                    | ServiceStateFull::Started { .. }
+                    | ServiceStateFull::Stopping {
+                        action_after_stopped:
+                            ActionAfterStopped::Restart | ActionAfterStopped::Start,
+                        ..
+                    }
+                    | ServiceStateFull::WaitingToRestart { .. } => {
+                        reqs.push_back(Request::Stop(svc.clone(), Box::new(|_| {})));
+                    }
+
+                    // While these can be ignored because they're already way to stop
+                    ServiceStateFull::Stopping {
+                        action_after_stopped: ActionAfterStopped::Nothing,
+                        ..
+                    } => {}
+
+                    // These mean service is completely stopped
+                    ServiceStateFull::Stopped { .. }
+                    | ServiceStateFull::Crashed { .. }
+                    | ServiceStateFull::Deleted => {
+                        stop_count += 1;
+                    }
+                }
+            }
+
+            manager_lock.reqs = reqs;
+
+            if stop_count == manager_lock.services.len() {
+                break;
+            }
+        }
+
         drop(manager_lock);
+    }
+
+    *manager.shutted_down.lock() = true;
+    manager.shutted_down_changed.notify_all();
+
+    loop {
+        sleep(Duration::from_hours(1));
     }
 }
