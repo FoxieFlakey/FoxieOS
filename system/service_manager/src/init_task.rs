@@ -46,13 +46,9 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
         graceful_signal: Signal::SIGTERM,
         graceful_delay: Duration::from_secs(5),
         start_timeout: Duration::from_secs(20),
-        ready_eventfd_arg: Some("-s".to_string()),
+        ready_eventfd_arg: None,
     });
 
-    shell_service.start().context("Cannot start shell")?;
-    sleep(Duration::from_secs(1));
-    shell_service.stop().context("Cannot stop shell")?;
-    sleep(Duration::from_secs(10));
     shell_service.start().context("Cannot start shell")?;
 
     Ok(())
