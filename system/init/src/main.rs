@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
     fs::{self, File, OpenOptions},
+    io,
     os::fd::{AsFd, AsRawFd},
     path::Path,
     process::Command,
@@ -40,58 +41,49 @@ fn main() -> anyhow::Result<Infallible> {
     prep_fs().context("Cannot prepare fs")?;
 
     // Replace stdio with one from /dev/ttyprintk
-    let tty = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/ttyprintk")
-        .context("Cannot open /dev/ttyprintk")?;
-    dup2_stdin(tty.as_fd()).context("Cannot dup into stdin")?;
-    dup2_stdout(tty.as_fd()).context("Cannot dup into stdout")?;
-    dup2_stderr(tty.as_fd()).context("Cannot dup into stderr")?;
+    let tty = retry_eintr(|| {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/ttyprintk")
+    })
+    .context("Cannot open /dev/ttyprintk")?;
+    retry_eintr(|| dup2_stdin(tty.as_fd())).context("Cannot dup into stdin")?;
+    retry_eintr(|| dup2_stdout(tty.as_fd())).context("Cannot dup into stdout")?;
+    retry_eintr(|| dup2_stderr(tty.as_fd())).context("Cannot dup into stderr")?;
     drop(tty);
 
     let eventfd_for_service_mgr =
         EventFd::new().context("Cannot create service manager ready eventfd")?;
     let eventfd_for_sandboxer = unsafe {
         EventFd::from_owned_fd(
-            dup(eventfd_for_service_mgr.as_fd())
+            retry_eintr(|| dup(eventfd_for_service_mgr.as_fd()))
                 .context("Cannot dup service manager ready eventfd")?,
         )
     };
 
-    let shutdown_req = EventFd::new().context("Cannot create shutdown req eventfd")?;
-    let shutdown_acked = EventFd::new().context("Cannot create shutdown acked eventfd")?;
+    let shutdown_req =
+        retry_eintr(|| EventFd::new()).context("Cannot create shutdown req eventfd")?;
+    let shutdown_acked =
+        retry_eintr(|| EventFd::new()).context("Cannot create shutdown acked eventfd")?;
 
     let shutdown_req_for_service_mgr = unsafe {
         EventFd::from_owned_fd(
-            dup(shutdown_req.as_fd()).context("Cannot dup shutdown req eventfd")?,
+            retry_eintr(|| dup(shutdown_req.as_fd())).context("Cannot dup shutdown req eventfd")?,
         )
     };
 
     let shutdown_acked_for_service_mgr = unsafe {
         EventFd::from_owned_fd(
-            dup(shutdown_acked.as_fd()).context("Cannot dup shutdown acked eventfd")?,
+            retry_eintr(|| dup(shutdown_acked.as_fd()))
+                .context("Cannot dup shutdown acked eventfd")?,
         )
     };
 
     thread::spawn(move || {
-        loop {
-            match shutdown_req.read() {
-                Ok(_) => break,
-                Err(Errno::EINTR) => continue,
-                Err(e) => unreachable!("Cannot read shutdown req: {e}"),
-            }
-        }
-
+        retry_eintr(|| shutdown_req.read()).expect("Cannot read shutdown req: {e}");
         INTENDING_TO_SHUTDOWN.store(true, Ordering::Relaxed);
-
-        loop {
-            match shutdown_acked.write(1) {
-                Ok(_) => break,
-                Err(Errno::EINTR) => continue,
-                Err(e) => unreachable!("Cannot write shutdown ack: {e}"),
-            }
-        }
+        retry_eintr(|| shutdown_acked.write(1)).expect("Cannot write shutdown ack: {e}");
     });
 
     // We will wait outselves later, for why Child is dropped
@@ -154,7 +146,7 @@ fn main() -> anyhow::Result<Infallible> {
     let mut sandboxer_stopped = false;
 
     while !service_manager_stopped || !sandboxer_stopped {
-        match waitpid(None, None) {
+        match retry_eintr(|| waitpid(None, None)) {
             Ok(WaitStatus::Exited(pid, code)) => {
                 println!("init: (repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
@@ -219,12 +211,12 @@ fn main() -> anyhow::Result<Infallible> {
 fn do_shutdown() -> anyhow::Result<Infallible> {
     println!("init: going to shutdown, bye bye! System server exited normally");
 
-    kill(Pid::from_raw(-1), Signal::SIGKILL)
+    retry_eintr(|| kill(Pid::from_raw(-1), Signal::SIGKILL))
         .context("Cannot kill all processes when shutting down")?;
 
     // Now reap everything else
     loop {
-        match waitpid(None, None) {
+        match retry_eintr(|| waitpid(None, None)) {
             Ok(WaitStatus::Stopped(_, _))
             | Err(Errno::EINTR)
             | Ok(WaitStatus::PtraceEvent(_, _, _))
@@ -256,7 +248,7 @@ fn do_shutdown() -> anyhow::Result<Infallible> {
 
     sync();
     sleep(Duration::from_secs(1));
-    Ok(reboot(RebootMode::RB_POWER_OFF).context("Cannot perform shutdown")?)
+    Ok(retry_eintr(|| reboot(RebootMode::RB_POWER_OFF)).context("Cannot perform shutdown")?)
 }
 
 static SHELLS: LazyLock<Mutex<Box<[ShellState]>>> =
@@ -332,19 +324,21 @@ impl ShellState {
 
     pub fn spawn(&mut self) -> anyhow::Result<Pid> {
         Ok(Pid::from_raw(
-            Command::new("/system/bin/tty_spawner")
-                .arg("--binary")
-                .arg("/system/bin/busybox")
-                .arg("--arg0")
-                .arg("sh")
-                .arg("--tty-dev")
-                .arg(self.dev)
-                .arg("--")
-                .arg("-i")
-                .spawn()?
-                .id()
-                .try_into()
-                .context("Cannot convert u32 to i32 for PID")?,
+            retry_eintr(|| {
+                Command::new("/system/bin/tty_spawner")
+                    .arg("--binary")
+                    .arg("/system/bin/busybox")
+                    .arg("--arg0")
+                    .arg("sh")
+                    .arg("--tty-dev")
+                    .arg(self.dev)
+                    .arg("--")
+                    .arg("-i")
+                    .spawn()
+            })?
+            .id()
+            .try_into()
+            .context("Cannot convert u32 to i32 for PID")?,
         ))
     }
 }
@@ -355,74 +349,132 @@ fn prep_fs() -> anyhow::Result<()> {
         | MsFlags::MS_NODEV
         | MsFlags::MS_NOEXEC
         | MsFlags::MS_NOSUID;
-    mount(
-        None::<&Path>,
-        "/tmp",
-        Some("tmpfs"),
-        flags,
-        Some("size=32M"),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/tmp",
+            Some("tmpfs"),
+            flags,
+            Some("size=32M"),
+        )
+    })
     .context("Mounting init's /tmp")?;
-    mount(
-        None::<&Path>,
-        "/mnt",
-        Some("tmpfs"),
-        flags,
-        Some("size=32M"),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/mnt",
+            Some("tmpfs"),
+            flags,
+            Some("size=32M"),
+        )
+    })
     .context("Mounting /mnt tmpfs")?;
 
     // NOTE: devtmpfs is mounted by init, we dont need to do anything here
 
-    mount(None::<&Path>, "/proc", Some("proc"), flags, None::<&Path>).context("Mounthing /proc")?;
-    mount(None::<&Path>, "/sys", Some("sysfs"), flags, None::<&Path>).context("Mounthing /sys")?;
-    mount(
-        None::<&Path>,
-        "/sys/fs/cgroup",
-        Some("cgroup2"),
-        flags,
-        None::<&Path>,
-    )
+    retry_eintr(|| mount(None::<&Path>, "/proc", Some("proc"), flags, None::<&Path>))
+        .context("Mounthing /proc")?;
+    retry_eintr(|| mount(None::<&Path>, "/sys", Some("sysfs"), flags, None::<&Path>))
+        .context("Mounthing /sys")?;
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/sys/fs/cgroup",
+            Some("cgroup2"),
+            flags,
+            None::<&Path>,
+        )
+    })
     .context("Mounthing /sys/fs/cgroup")?;
 
-    mount(
-        None::<&Path>,
-        "/dev",
-        Some("devtmpfs"),
-        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
-        None::<&Path>,
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/dev",
+            Some("devtmpfs"),
+            MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
+            None::<&Path>,
+        )
+    })
     .context("Mounthing /dev")?;
 
-    fs::create_dir_all("/dev/binderfs").context("Creating binderfs")?;
+    retry_eintr(|| fs::create_dir_all("/dev/binderfs")).context("Creating binderfs")?;
 
-    mount(
-        None::<&Path>,
-        "/dev/binderfs",
-        Some("binder"),
-        // The files under binderfs is inherently special device
-        flags & !MsFlags::MS_NODEV,
-        Some("stats=global"),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/dev/binderfs",
+            Some("binder"),
+            // The files under binderfs is inherently special device
+            flags & !MsFlags::MS_NODEV,
+            Some("stats=global"),
+        )
+    })
     .context("Mounting /dev/binderfs")?;
 
-    fchmodat(
-        AT_FDCWD,
-        "/dev/binderfs/binder",
-        Mode::from_bits_retain(0o666),
-        FchmodatFlags::NoFollowSymlink,
-    )
+    retry_eintr(|| {
+        fchmodat(
+            AT_FDCWD,
+            "/dev/binderfs/binder",
+            Mode::from_bits_retain(0o666),
+            FchmodatFlags::NoFollowSymlink,
+        )
+    })
     .context("Cannot chmod binder file")?;
 
-    File::create_new("/dev/binder").context("Cannot create empty file at /dev/binder")?;
+    retry_eintr(|| File::create_new("/dev/binder"))
+        .context("Cannot create empty file at /dev/binder")?;
 
-    mount(
-        Some("/dev/binderfs/binder"),
-        "/dev/binder",
-        None::<&Path>,
-        MsFlags::MS_BIND,
-        None::<&Path>,
-    )
+    retry_eintr(|| {
+        mount(
+            Some("/dev/binderfs/binder"),
+            "/dev/binder",
+            None::<&Path>,
+            MsFlags::MS_BIND,
+            None::<&Path>,
+        )
+    })
     .context("Mount binding primary binder")?;
     Ok(())
+}
+
+mod private {
+    pub trait Sealed {}
+}
+
+pub trait IsEIntr: private::Sealed {
+    fn is_eintr(&self) -> bool;
+}
+
+impl private::Sealed for Errno {}
+impl IsEIntr for Errno {
+    fn is_eintr(&self) -> bool {
+        matches!(self, Errno::EINTR)
+    }
+}
+
+impl private::Sealed for io::Error {}
+impl IsEIntr for io::Error {
+    fn is_eintr(&self) -> bool {
+        matches!(self.kind(), io::ErrorKind::Interrupted)
+    }
+}
+
+pub fn retry_eintr<T, E, F>(mut func: F) -> Result<T, E>
+where
+    F: FnMut() -> Result<T, E>,
+    E: IsEIntr,
+{
+    loop {
+        match func() {
+            Ok(x) => return Ok(x),
+            Err(e) => {
+                if e.is_eintr() {
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
 }
