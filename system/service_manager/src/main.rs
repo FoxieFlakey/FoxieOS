@@ -7,6 +7,7 @@ use anyhow::Context;
 use caps::CapSet;
 use clap::Parser;
 use foxie_base::{sandboxer::ISandboxService, uids};
+use log::info;
 use nix::{
     errno::Errno,
     sys::{eventfd::EventFd, prctl},
@@ -35,6 +36,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    foxie_base::init_log("service_manager");
     let cli = Cli::parse();
     // Assume caler make it correct
     let ready_event_fd = unsafe {
@@ -75,8 +77,8 @@ fn main() -> anyhow::Result<()> {
 
     root_dev::discover_root().context("Cannot find root device")?;
 
-    println!("Root device was found at {}", root_dev::get_root_dev());
-    println!("Basic preboot rootfs is ready");
+    info!("Root device was found at {}", root_dev::get_root_dev());
+    info!("Basic preboot rootfs is ready");
 
     services_registry::run(|rt| {
         // Deprivilege service_manager
@@ -124,7 +126,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        println!("service_manager: init acked it! lets shutdown");
+        info!("init acked it! lets shutdown");
 
         constants::get_sandboxer()
             .stop()

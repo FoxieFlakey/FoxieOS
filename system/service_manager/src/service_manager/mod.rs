@@ -15,6 +15,7 @@ use foxie_base::{
 };
 use libbinder::{Runtime, object::B};
 use libbinder_basic::packetable::Serde;
+use log::{error, info, warn};
 use nix::{
     poll::PollTimeout,
     sys::{
@@ -171,8 +172,8 @@ fn manager_thread() {
             config: service::Config,
         ) -> ServiceStateFull {
             if is_shutting_down {
-                println!(
-                    "service_manager: Refused to start service '{}' because system shutting down",
+                warn!(
+                    "Refused to start service '{}' because system shutting down",
                     config.name
                 );
 
@@ -182,7 +183,7 @@ fn manager_thread() {
                 };
             }
 
-            println!("service_manager: Starting service '{}'", config.name);
+            info!("Starting service '{}'", config.name);
             let ready_fd =
                 retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service ready");
             // SAFETY: Just dup the fd
@@ -320,8 +321,8 @@ fn manager_thread() {
             };
 
             if crash_detail.is_allowed_to_restart() && !is_shutting_down {
-                println!(
-                    "service_manager: Service '{}' crashed with {reason}, retrying in {:.3} secs (fails {} times){}",
+                error!(
+                    "Service '{}' crashed with {reason}, retrying in {:.3} secs (fails {} times){}",
                     config.name,
                     config.retry_delay.as_secs_f32(),
                     crash_detail.crash_count(),
@@ -356,8 +357,8 @@ fn manager_thread() {
                     retry_timer,
                 }
             } else {
-                println!(
-                    "service_manager: Service '{}' crashed with {reason}, wont restarting{} (fails {} times)",
+                error!(
+                    "Service '{}' crashed with {reason}, wont restarting{} (fails {} times)",
                     config.name,
                     if is_shutting_down {
                         "due system is shutting down"
@@ -388,8 +389,8 @@ fn manager_thread() {
             started_since: Option<Instant>,
         ) -> ServiceStateFull {
             let stop_requested_at = Instant::now();
-            println!(
-                "service_manager: Stopping '{}' (Phase 1, graceful signal {} and SIGKILL after {:.2} secs). Service been running for {:.2} secs{}",
+            info!(
+                "Stopping '{}' (Phase 1, graceful signal {} and SIGKILL after {:.2} secs). Service been running for {:.2} secs{}",
                 config.name,
                 config.graceful_signal,
                 config.graceful_delay.as_secs_f32(),
@@ -718,8 +719,8 @@ fn manager_thread() {
                     else {
                         unreachable!("service should be just starting")
                     };
-                    println!(
-                        "service_manager: Service '{}' took too long to start >= {:.2} secs (starting since {:.2} secs)",
+                    warn!(
+                        "Service '{}' took too long to start >= {:.2} secs (starting since {:.2} secs)",
                         config.name,
                         config.start_timeout.as_secs_f32(),
                         starting_since.elapsed().as_secs_f32()
@@ -762,8 +763,8 @@ fn manager_thread() {
                         unreachable!("service should be just stopping")
                     };
 
-                    println!(
-                        "service_manager: Service '{}' being stubborn after {:.2} secs SIGKILL'ing it",
+                    warn!(
+                        "Service '{}' being stubborn after {:.2} secs SIGKILL'ing it",
                         config.name,
                         stop_requested_at.elapsed().as_secs_f32()
                     );
@@ -792,8 +793,8 @@ fn manager_thread() {
                         unreachable!("Service has to be 'starting'")
                     };
 
-                    println!(
-                        "service_manager: Service '{}' is started after {:.2} secs",
+                    info!(
+                        "Service '{}' is started after {:.2} secs",
                         config.name,
                         starting_since.elapsed().as_secs_f32()
                     );
@@ -834,7 +835,7 @@ fn manager_thread() {
                     retry_eintr(|| epoll.delete(retry_timer.as_fd()))
                         .expect("Cannot remove retry timerfd on restart");
 
-                    println!("service_manager: Restarting '{}'", config.name);
+                    info!("Restarting '{}'", config.name);
 
                     state.0 =
                         do_starting(rt, is_shutting_down, &epoll, &service, crash_detail, config);
@@ -954,8 +955,8 @@ fn manager_thread() {
                                 ),
                             };
                             if matches!(reason, ExitReason::Exit(0)) {
-                                println!(
-                                    "service_manager: Service '{}' stopped with {reason} in {:.2} secs{txt}",
+                                info!(
+                                    "Service '{}' stopped with {reason} in {:.2} secs{txt}",
                                     config.name,
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );
@@ -986,8 +987,8 @@ fn manager_thread() {
                                     ),
                                 }
                             } else {
-                                println!(
-                                    "service_manager: Service '{}' stopped with {reason} (did crashed during stopping) in {:.2} secs{txt}",
+                                warn!(
+                                    "Service '{}' stopped with {reason} (did crashed during stopping) in {:.2} secs{txt}",
                                     config.name,
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );

@@ -3,6 +3,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::Context;
 use clap::Parser;
 use foxie_base::util::retry_eintr;
+use log::info;
 use nix::sys::eventfd::EventFd;
 use parking_lot::{Condvar, Mutex};
 
@@ -16,6 +17,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    foxie_base::init_log("graphics_server");
     let cli = Cli::parse();
     // Assume caler make it correct
     let ready_event_fd = unsafe {
@@ -25,7 +27,7 @@ fn main() -> anyhow::Result<()> {
                 .context("--ready-event-fd is not valid fd")?,
         ))
     };
-    println!("Hello, world!");
+    info!("Hello, world!");
 
     retry_eintr(|| ready_event_fd.write(1)).context("Cannot send ready notification")?;
 

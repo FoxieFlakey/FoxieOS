@@ -19,6 +19,7 @@ use libbinder::{
     object::{B, ObjectFlags, ObjectTrait},
 };
 use libbinder_basic::{TryFromProxy, packetable::Serde};
+use log::info;
 use nix::{
     sys::{eventfd::EventFd, prctl},
     unistd::setresuid,
@@ -43,6 +44,7 @@ struct Cli {
 // Sandbox service never shutdown. It runs forever
 // till end of system
 fn main() -> anyhow::Result<()> {
+    foxie_base::init_log("sandboxer");
     let cli = Cli::parse();
     // Assume caler make it correct
     let service_manager_ready_event_fd = unsafe {
@@ -105,7 +107,7 @@ fn main() -> anyhow::Result<()> {
     drop(registration_cookie);
 
     sandboxer::shutdown();
-    println!("sandboxer: Shutting down");
+    info!("Shutting down");
     Ok(())
 }
 

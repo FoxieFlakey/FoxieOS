@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use foxie_base::sandboxer;
+use log::info;
 use nix::sys::signal::Signal;
 
 use crate::service_manager::{self, service::Service};
@@ -44,11 +45,11 @@ pub fn run() -> anyhow::Result<()> {
     graphics_server_ervice
         .ensure_started()
         .context("Cannot wait until graphic server started")?;
-    println!("Graphics server started!");
+    info!("Graphics server started!");
 
     shell_service
         .ensure_started()
         .context("Cannot wait shell startup")?;
-    println!("Shell started!");
+    info!("Shell started!");
     Ok(())
 }

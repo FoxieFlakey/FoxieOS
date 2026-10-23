@@ -7,5 +7,6 @@ edition = "2024"
 anyhow = "1.0.104"
 command-fds = "0.3.3"
 foxie_base = { version = "0.1.0", path = "../foxie_base" }
+log = "0.4.34"
 nix = { version = "0.31.3", features = ["event", "fs", "mount", "process", "reboot", "signal"] }
 parking_lot = "0.12.5"

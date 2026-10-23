@@ -16,6 +16,7 @@ use std::{
 use anyhow::Context;
 use foxie_base::{common::SerdeSignal, sandboxer::ExitReason, util::retry_eintr};
 use libbinder::object::B;
+use log::{info, warn};
 use nix::{
     fcntl::{OFlag, open},
     mount::{MntFlags, MsFlags, mount, umount2},
@@ -180,8 +181,8 @@ pub fn init() -> anyhow::Result<()> {
                     watched.retain_mut(|sandbox: &mut sandbox::Inner| match sandbox.destroy() {
                         Ok(()) => false,
                         Err(x) => {
-                            println!(
-                                "sandboxer: Sandbox {} cannot be destroyed, trying later: {x:#?}",
+                            info!(
+                                "Sandbox {} cannot be destroyed, trying later: {x:#?}",
                                 sandbox.id
                             );
                             true
@@ -317,7 +318,7 @@ where
         .sub_dir(&format!("{id}"))
         .inspect_err(|_| {
             if let Err(e) = get_cgroup_dir().remove_dir(&format!("{id}")) {
-                println!("sandboxer: [warning] cannot remove sandbox cgroup dir for failed creation of {id}, leaking it: Cause: {e}");
+                warn!("cannot remove sandbox cgroup dir for failed creation of {id}, leaking it: Cause: {e}");
             } else {
                 SANDBOX_ID_FREE.lock().push_back(id)
             }

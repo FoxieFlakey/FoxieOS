@@ -20,6 +20,7 @@ use foxie_base::{
 };
 use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::packetable::Serde;
+use log::{debug, warn};
 use nix::unistd::{Pid, Uid};
 use openat::Dir;
 use parking_lot::Mutex;
@@ -151,7 +152,7 @@ impl Inner {
             .context("Removing cgroup dir")?;
 
         // Succesfully destroyed, release the ID
-        println!("sandboxer: Destroyed sandbox: {}", self.id);
+        debug!("sandboxer: Destroyed sandbox: {}", self.id);
         SANDBOX_ID_FREE.lock().push_back(self.id);
 
         self.is_destroyed = true;
@@ -187,7 +188,7 @@ impl Drop for Sandbox {
                     }
 
                     if let Some(e) = err {
-                        println!(
+                        warn!(
                             "sandboxer: We're shutting down but sandbox {} cannot be destroyed (ignoring after 5 attemps): {e:#}",
                             sandbox.id
                         );

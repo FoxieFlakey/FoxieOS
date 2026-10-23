@@ -15,6 +15,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use command_fds::CommandFdExt;
+use log::info;
 use nix::{
     errno::Errno,
     fcntl::AT_FDCWD,
@@ -37,6 +38,7 @@ fn main() -> anyhow::Result<Infallible> {
     if Pid::this().as_raw() != 1 {
         bail!("Must run as PID 1");
     }
+    foxie_base::init_log("init");
 
     prep_fs().context("Cannot prepare fs")?;
 
@@ -124,7 +126,7 @@ fn main() -> anyhow::Result<Infallible> {
         for shell in SHELLS.lock().iter_mut() {
             if let Some(active_pid) = shell.pid {
                 if active_pid == pid {
-                    println!("init: Debug shell {active_pid} is dead");
+                    info!("Debug shell {active_pid} is dead");
                     // Shell is dead
                     shell.pid = None;
                     shell.retry_at = Instant::now();
@@ -148,7 +150,7 @@ fn main() -> anyhow::Result<Infallible> {
     while !service_manager_stopped || !sandboxer_stopped {
         match retry_eintr(|| waitpid(None, None)) {
             Ok(WaitStatus::Exited(pid, code)) => {
-                println!("init: (repear) Process {pid} exited with {code}");
+                info!("(repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
                     if INTENDING_TO_SHUTDOWN.load(Ordering::Relaxed) {
                         if code == 0 {
@@ -177,8 +179,8 @@ fn main() -> anyhow::Result<Infallible> {
                 check_shell(pid, code != 0);
             }
             Ok(WaitStatus::Signaled(pid, signal, is_core_dumped)) => {
-                println!(
-                    "init: (repear) Process {pid} killed with {signal}{}",
+                info!(
+                    "(repear) Process {pid} killed with {signal}{}",
                     if is_core_dumped { " (core dumped)" } else { "" }
                 );
 
@@ -209,7 +211,7 @@ fn main() -> anyhow::Result<Infallible> {
 }
 
 fn do_shutdown() -> anyhow::Result<Infallible> {
-    println!("init: going to shutdown, bye bye! System server exited normally");
+    info!("going to shutdown, bye bye! System server exited normally");
 
     retry_eintr(|| kill(Pid::from_raw(-1), Signal::SIGKILL))
         .context("Cannot kill all processes when shutting down")?;
@@ -224,17 +226,15 @@ fn do_shutdown() -> anyhow::Result<Infallible> {
             | Ok(WaitStatus::Continued(_))
             | Ok(WaitStatus::StillAlive) => continue,
             Ok(WaitStatus::Exited(pid, code)) => {
-                println!("init: shutdown: Process {pid} is exieted with {code}");
+                info!("shutdown: Process {pid} is exieted with {code}");
             }
             Ok(WaitStatus::Signaled(pid, signal, is_core_dumped)) => {
                 if is_core_dumped {
-                    println!(
-                        "init: shutdown: Process {pid} is signalled and stopped with {signal} (core dumped)"
+                    info!(
+                        "shutdown: Process {pid} is signalled and stopped with {signal} (core dumped)"
                     );
                 } else {
-                    println!(
-                        "init: shutdown: Process {pid} is signalled and stopped with {signal}"
-                    );
+                    info!("shutdown: Process {pid} is signalled and stopped with {signal}");
                 }
             }
 
@@ -292,14 +292,11 @@ fn shell_spawner() {
             // We retry shell that is just died or waited long enough
             match shell.spawn() {
                 Ok(x) => {
-                    println!("init: Respawned debug shell at {}", shell.dev);
+                    info!("Respawned debug shell at {}", shell.dev);
                     shell.pid = Some(x);
                 }
                 Err(e) => {
-                    println!(
-                        "init: Cannot spawn shell at {}, retrying later: {e}",
-                        shell.dev
-                    );
+                    info!("Cannot spawn shell at {}, retrying later: {e}", shell.dev);
                     shell.retry_at = Instant::now() + ABNORMAL_RETRY_DURATION;
                 }
             }

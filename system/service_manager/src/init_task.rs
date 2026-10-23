@@ -9,6 +9,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
+use log::info;
 use parking_lot::{Condvar, Mutex};
 
 use crate::{service_manager, services};
@@ -70,7 +71,7 @@ impl IServiceManagerCtl for Init {
     }
 
     fn request_shutdown(&self) -> anyhow::Result<Result<(), Serde<ShutdownError>>> {
-        println!("service_manager: Shutdown requested!");
+        info!("Shutdown requested!");
         *DO_SHUTDOWN.lock() = true;
         DO_SHUTDOWN_COND.notify_all();
         Ok(Ok(()))

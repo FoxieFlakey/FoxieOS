@@ -19,6 +19,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
+use log::info;
 use parking_lot::RwLock;
 
 use crate::init_task;
@@ -60,7 +61,7 @@ where
         .ok()
         .unwrap();
 
-    println!("service_manager: Ready!");
+    info!("Ready!");
     manager_ready(&runtime)?;
     drop(runtime);
     Ok(())
@@ -88,7 +89,7 @@ impl ServiceRegistry {
         if state.services.contains_key(service) {
             state.services.remove(service);
             state.watchers.remove(service);
-            println!("service_manager: Service {service} unregistered");
+            info!("Service {service} unregistered");
         }
     }
 }
@@ -130,7 +131,7 @@ impl IServiceRegistry for ServiceRegistry {
             }
         });
 
-        println!("service_manager: Registered service '{}'", name);
+        info!("Registered service '{}'", name);
 
         // Wake up waiters
         for waiter in waiters.iter().flatten() {
