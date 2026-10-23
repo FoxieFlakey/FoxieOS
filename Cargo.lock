@@ -344,6 +344,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "command-fds",
+ "foxie_base",
  "nix",
  "parking_lot 0.12.5",
 ]

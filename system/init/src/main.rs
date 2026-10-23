@@ -23,10 +23,10 @@ use nix::{
         eventfd::EventFd,
         reboot::{RebootMode, reboot},
         signal::{Signal, kill},
-        stat::{FchmodatFlags, Mode, fchmodat},
+        stat::{FchmodatFlags, Mode, fchmod, fchmodat},
         wait::{WaitStatus, waitpid},
     },
-    unistd::{Pid, dup, dup2_stderr, dup2_stdin, dup2_stdout, sync},
+    unistd::{Gid, Pid, dup, dup2_stderr, dup2_stdin, dup2_stdout, fchown, sync},
 };
 use parking_lot::{Condvar, Mutex};
 
@@ -435,6 +435,19 @@ fn prep_fs() -> anyhow::Result<()> {
         )
     })
     .context("Mount binding primary binder")?;
+
+    let graphics_node =
+        retry_eintr(|| File::open("/dev/dri/card0")).context("Cannot open /dev/dri/card0")?;
+    retry_eintr(|| fchmod(graphics_node.as_fd(), Mode::S_IRUSR | Mode::S_IWUSR))
+        .context("Cannot set mode for /dev/dri/card0")?;
+    retry_eintr(|| {
+        fchown(
+            graphics_node.as_fd(),
+            Some(foxie_base::uids::GRAPHICS_SERVER),
+            Some(Gid::from(foxie_base::uids::GRAPHICS_SERVER.as_raw())),
+        )
+    })
+    .context("Cannot set owner and group for /dev/dri/card0")?;
     Ok(())
 }
 
