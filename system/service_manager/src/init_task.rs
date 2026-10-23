@@ -1,11 +1,7 @@
-use std::{
-    sync::{Arc, OnceLock, Weak},
-    time::Duration,
-};
+use std::sync::{Arc, OnceLock, Weak};
 
-use anyhow::Context;
 use foxie_base::{
-    IObject, iobject, sandboxer,
+    IObject, iobject,
     service_registry::{IServiceManagerCtl, ShutdownError, iservicemanagerctl},
 };
 use libbinder::{
@@ -13,10 +9,9 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::packetable::Serde;
-use nix::sys::signal::Signal;
 use parking_lot::{Condvar, Mutex};
 
-use crate::service_manager::{self, service::Service};
+use crate::{service_manager, services};
 
 pub static INIT: OnceLock<Arc<B<dyn IServiceManagerCtl>>> = OnceLock::new();
 pub static DO_SHUTDOWN: Mutex<bool> = Mutex::new(false);
@@ -31,26 +26,9 @@ pub fn run(runtime: &Arc<Runtime>) -> anyhow::Result<()> {
 
     // Starting the process service manager (not binder)
     service_manager::init(runtime.clone());
-    let shell_service = Service::new(service_manager::service::Config {
-        name: "shell".to_string(),
-        binary: "/system/busybox_bins/sh".into(),
-        arg0: None,
-        argv: vec![],
-        tty: Some("/dev/hvc0".into()),
-        uid: foxie_base::uids::SHELL,
-        sandbox_profile: sandboxer::Profile::Unconfined,
-        retry_delay: Duration::from_secs(0),
-        retry_count: 5,
-        retry_window: Duration::from_mins(2),
-        graceful_signal: Signal::SIGTERM,
-        graceful_delay: Duration::from_secs(5),
-        start_timeout: Duration::from_secs(20),
-        ready_eventfd_arg: None,
-    });
 
-    shell_service.start().context("Cannot start shell")?;
-
-    Ok(())
+    // Register & start services
+    services::run()
 }
 
 struct Init {

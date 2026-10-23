@@ -21,6 +21,7 @@ mod constants;
 mod init_task;
 mod root_dev;
 mod service_manager;
+mod services;
 mod services_registry;
 
 #[derive(Parser)]
