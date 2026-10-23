@@ -8,6 +8,7 @@ use caps::CapSet;
 use clap::Parser;
 use foxie_base::{sandboxer::ISandboxService, uids};
 use nix::{
+    errno::Errno,
     sys::{eventfd::EventFd, prctl},
     unistd::{setresuid, setuid},
 };
@@ -24,6 +25,10 @@ mod services_registry;
 struct Cli {
     #[arg(long)]
     ready_event_fd: u32,
+    #[arg(long)]
+    shutdown_req_to_init: u32,
+    #[arg(long)]
+    shutdown_req_acked_from_init: u32,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -34,6 +39,20 @@ fn main() -> anyhow::Result<()> {
             cli.ready_event_fd
                 .try_into()
                 .context("--ready-event-fd is not valid fd")?,
+        ))
+    };
+    let shutdown_req_eventfd = unsafe {
+        EventFd::from_owned_fd(OwnedFd::from_raw_fd(
+            cli.shutdown_req_to_init
+                .try_into()
+                .context("--shutdown-req-to-init is not valid fd")?,
+        ))
+    };
+    let shutdown_ack_eventfd = unsafe {
+        EventFd::from_owned_fd(OwnedFd::from_raw_fd(
+            cli.shutdown_req_acked_from_init
+                .try_into()
+                .context("--shutdown-req-acked-from-init is not valid fd")?,
         ))
     };
 
@@ -81,11 +100,34 @@ fn main() -> anyhow::Result<()> {
 
         init_task::DO_SHUTDOWN_COND.wait_while(&mut init_task::DO_SHUTDOWN.lock(), |x| *x != true);
 
+        // Telling init that we want to shutdown
+        // so it knows that some process that exited :3
+        // that shouldnt exit is intended
+        loop {
+            match shutdown_req_eventfd.write(1) {
+                Ok(_) => break,
+                Err(Errno::EINTR) => continue,
+                Err(e) => Err(e).context("Cannot write to shutdown req eventfd")?,
+            }
+        }
+
+        // Now wait until init acked it
+        loop {
+            match shutdown_ack_eventfd.read() {
+                Ok(_) => break,
+                Err(Errno::EINTR) => continue,
+                Err(e) => Err(e).context("Cannot read from shutdown req ack from init eventfd")?,
+            }
+        }
+
+        println!("service_manager: init acked it! lets shutdown");
+
         constants::get_sandboxer()
             .stop()
             .context("Cannot send stop transaction to sandboxer")?
             .context("Cannot request sandboxer to stop")?;
         Ok(())
     })?;
+
     Ok(())
 }

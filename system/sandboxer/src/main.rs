@@ -99,7 +99,6 @@ fn main() -> anyhow::Result<()> {
         .map_err(|Serde(x)| x)
         .context("Cannot register sandboxer")?;
 
-    // Doenst care, jsut sleep forever
     SHUTDOWN_CHANGED.wait_while(&mut CAN_SHUTDOWN.lock(), |&mut x| !x);
 
     // Allow sandboxer to be unregistered

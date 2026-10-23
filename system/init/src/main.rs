@@ -4,7 +4,10 @@ use std::{
     os::fd::{AsFd, AsRawFd},
     path::Path,
     process::Command,
-    sync::LazyLock,
+    sync::{
+        LazyLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{self, sleep},
     time::{Duration, Instant},
 };
@@ -12,6 +15,7 @@ use std::{
 use anyhow::{Context, bail};
 use command_fds::CommandFdExt;
 use nix::{
+    errno::Errno,
     fcntl::AT_FDCWD,
     mount::{MsFlags, mount},
     sys::{
@@ -24,6 +28,9 @@ use nix::{
     unistd::{Pid, dup, dup2_stderr, dup2_stdin, dup2_stdout, sync},
 };
 use parking_lot::{Condvar, Mutex};
+
+// Whether the service manager intending to shutdown
+static INTENDING_TO_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 fn main() -> anyhow::Result<Infallible> {
     if Pid::this().as_raw() != 1 {
@@ -52,12 +59,55 @@ fn main() -> anyhow::Result<Infallible> {
         )
     };
 
+    let shutdown_req = EventFd::new().context("Cannot create shutdown req eventfd")?;
+    let shutdown_acked = EventFd::new().context("Cannot create shutdown acked eventfd")?;
+
+    let shutdown_req_for_service_mgr = unsafe {
+        EventFd::from_owned_fd(
+            dup(shutdown_req.as_fd()).context("Cannot dup shutdown req eventfd")?,
+        )
+    };
+
+    let shutdown_acked_for_service_mgr = unsafe {
+        EventFd::from_owned_fd(
+            dup(shutdown_acked.as_fd()).context("Cannot dup shutdown acked eventfd")?,
+        )
+    };
+
+    thread::spawn(move || {
+        loop {
+            match shutdown_req.read() {
+                Ok(_) => break,
+                Err(Errno::EINTR) => continue,
+                Err(e) => unreachable!("Cannot read shutdown req: {e}"),
+            }
+        }
+
+        INTENDING_TO_SHUTDOWN.store(true, Ordering::Relaxed);
+
+        loop {
+            match shutdown_acked.write(1) {
+                Ok(_) => break,
+                Err(Errno::EINTR) => continue,
+                Err(e) => unreachable!("Cannot write shutdown ack: {e}"),
+            }
+        }
+    });
+
     // We will wait outselves later, for why Child is dropped
     let server_pid = i32::try_from(
         Command::new("/system/bin/service_manager")
             .arg("--ready-event-fd")
             .arg(&format!("{}", eventfd_for_service_mgr.as_raw_fd()))
-            .preserved_fds(vec![eventfd_for_service_mgr.into()])
+            .arg("--shutdown-req-to-init")
+            .arg(&format!("{}", shutdown_req_for_service_mgr.as_raw_fd()))
+            .arg("--shutdown-req-acked-from-init")
+            .arg(&format!("{}", shutdown_acked_for_service_mgr.as_raw_fd()))
+            .preserved_fds(vec![
+                eventfd_for_service_mgr.into(),
+                shutdown_req_for_service_mgr.into(),
+                shutdown_acked_for_service_mgr.into(),
+            ])
             .spawn()
             .context("Cannot spawn service_manager")?
             .id(),
@@ -100,52 +150,113 @@ fn main() -> anyhow::Result<Infallible> {
         }
     }
 
-    loop {
-        match waitpid(None, None).context("Cannot do waitpid")? {
-            WaitStatus::Exited(pid, code) => {
+    let mut service_manager_stopped = false;
+    let mut sandboxer_stopped = false;
+
+    while !service_manager_stopped || !sandboxer_stopped {
+        match waitpid(None, None) {
+            Ok(WaitStatus::Exited(pid, code)) => {
                 println!("init: (repear) Process {pid} exited with {code}");
                 if pid.as_raw() == server_pid {
-                    if code == 0 {
-                        // Service manager exited normally, it meean it requests shutdown
-                        do_shutdown();
+                    if INTENDING_TO_SHUTDOWN.load(Ordering::Relaxed) {
+                        if code == 0 {
+                            service_manager_stopped = true;
+                        } else {
+                            bail!(
+                                "Service manager failed during shutdown. It exited with code {code}"
+                            );
+                        }
                     } else {
                         bail!("Service manager must not exit at all. It exited with code {code}");
                     }
                 }
-
                 if pid.as_raw() == sandboxer_pid {
-                    bail!("Sandboxer must not exit at all. It exited with code {code}");
+                    if INTENDING_TO_SHUTDOWN.load(Ordering::Relaxed) {
+                        if code == 0 {
+                            sandboxer_stopped = true;
+                        } else {
+                            bail!("Sandboxer failed during shutdown. It exited with code {code}");
+                        }
+                    } else {
+                        bail!("Sandboxer must not exit at all. It exited with code {code}");
+                    }
                 }
 
                 check_shell(pid, code != 0);
             }
-            WaitStatus::Signaled(pid, signal, is_core_dumped) => {
+            Ok(WaitStatus::Signaled(pid, signal, is_core_dumped)) => {
                 println!(
                     "init: (repear) Process {pid} killed with {signal}{}",
                     if is_core_dumped { " (core dumped)" } else { "" }
                 );
 
+                if pid.as_raw() == sandboxer_pid {
+                    bail!("Sandboxer must not exit at all. It killed by signal {signal}");
+                } else if pid.as_raw() == server_pid {
+                    bail!("Service manager must not exit at all. It killed by signal {signal}");
+                }
                 check_shell(pid, true);
             }
-            WaitStatus::Stopped(_, _)
-            | WaitStatus::PtraceEvent(_, _, _)
-            | WaitStatus::PtraceSyscall(_)
-            | WaitStatus::Continued(_)
-            | WaitStatus::StillAlive => continue,
+            Ok(WaitStatus::Stopped(_, _))
+            | Err(Errno::EINTR)
+            | Ok(WaitStatus::PtraceEvent(_, _, _))
+            | Ok(WaitStatus::PtraceSyscall(_))
+            | Ok(WaitStatus::Continued(_))
+            | Ok(WaitStatus::StillAlive) => continue,
+            Err(Errno::ECHILD) => {
+                // Nothing lives anymore? do shutdown
+                break;
+            }
+            x @ Err(_) => {
+                x.context("Cannot do waitpid")?;
+            }
         };
     }
+
+    do_shutdown()
 }
 
-fn do_shutdown() -> ! {
+fn do_shutdown() -> anyhow::Result<Infallible> {
     println!("init: going to shutdown, bye bye! System server exited normally");
 
-    // NOTE: Make this less fragile?
-    // Kill everything except init
-    kill(Pid::from_raw(-1), Signal::SIGKILL).expect("Cannot kill all processes when shutting down");
+    kill(Pid::from_raw(-1), Signal::SIGKILL)
+        .context("Cannot kill all processes when shutting down")?;
+
+    // Now reap everything else
+    loop {
+        match waitpid(None, None) {
+            Ok(WaitStatus::Stopped(_, _))
+            | Err(Errno::EINTR)
+            | Ok(WaitStatus::PtraceEvent(_, _, _))
+            | Ok(WaitStatus::PtraceSyscall(_))
+            | Ok(WaitStatus::Continued(_))
+            | Ok(WaitStatus::StillAlive) => continue,
+            Ok(WaitStatus::Exited(pid, code)) => {
+                println!("init: shutdown: Process {pid} is exieted with {code}");
+            }
+            Ok(WaitStatus::Signaled(pid, signal, is_core_dumped)) => {
+                if is_core_dumped {
+                    println!(
+                        "init: shutdown: Process {pid} is signalled and stopped with {signal} (core dumped)"
+                    );
+                } else {
+                    println!(
+                        "init: shutdown: Process {pid} is signalled and stopped with {signal}"
+                    );
+                }
+            }
+
+            // No more child
+            Err(Errno::ECHILD) => break,
+            x @ Err(_) => {
+                x.context("Cannot waitpid")?;
+            }
+        }
+    }
+
     sync();
     sleep(Duration::from_secs(1));
-    reboot(RebootMode::RB_POWER_OFF).expect("Cannot perform shutdown");
-    panic!("Isnt shutting down!");
+    Ok(reboot(RebootMode::RB_POWER_OFF).context("Cannot perform shutdown")?)
 }
 
 static SHELLS: LazyLock<Mutex<Box<[ShellState]>>> =
