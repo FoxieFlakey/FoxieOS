@@ -30,6 +30,7 @@ pub struct Config {
 
     // What is delay between respawning
     pub retry_delay: Duration,
+    pub start_timeout: Duration,
 
     // How many retries can occur within last retry_window duration
     // before considred failed
@@ -60,6 +61,11 @@ impl Config {
             cmp::max(self.retry_window, Duration::from_secs(10)),
             Duration::from_mins(5),
         );
+
+        self.start_timeout = cmp::min(
+            cmp::max(self.start_timeout, Duration::from_secs(1)),
+            Duration::from_mins(5),
+        );
     }
 }
 
@@ -82,6 +88,7 @@ pub(super) enum ServiceStateFull {
         // pre-fired
         notifier: EventFd,
         exited_notifier: Arc<EventFd>,
+        start_timed_out: TimerFd,
     },
     Started {
         config: Config,
@@ -100,7 +107,7 @@ pub(super) enum ServiceStateFull {
         // hard sigkill
         kill_timer: TimerFd,
         exited_notifier: Arc<EventFd>,
-        start_on_stop: bool,
+        action_after_stopped: ActionAfterStopped,
         stop_requested_at: Instant,
     },
     Stopped {
@@ -120,6 +127,12 @@ pub(super) enum ServiceStateFull {
     },
     // Service no longer exists
     Deleted,
+}
+
+pub(super) enum ActionAfterStopped {
+    Nothing,
+    Restart,
+    Start,
 }
 
 #[derive(Clone)]

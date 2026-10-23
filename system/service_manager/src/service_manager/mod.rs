@@ -29,7 +29,9 @@ use parking_lot::{Mutex, Once};
 
 use crate::{
     constants::get_sandboxer,
-    service_manager::service::{CrashDetail, RequestError, Service, ServiceStateFull},
+    service_manager::service::{
+        ActionAfterStopped, CrashDetail, RequestError, Service, ServiceStateFull,
+    },
 };
 
 pub mod service;
@@ -117,6 +119,9 @@ fn manager_thread() {
     // A service need to be sigkill'ed to stop (only for stopping state)
     const TYPE_SERVICE_NEED_SIGKILL: u64 = 0x4 << 32;
 
+    // A service timed out when starting
+    const TYPE_SERVICE_START_TIMEOUT: u64 = 0x5 << 32;
+
     nix::sys::prctl::set_name(&c"Manager thread").unwrap();
 
     let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC).expect("Cannot create epoll fd");
@@ -181,6 +186,25 @@ fn manager_thread() {
             // Currently havent passed it to service yet about ready status
             ready_fd.write(1).expect("Cannot fire ready_fd");
 
+            let start_timed_out = TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC)
+                .expect("Cannot create timeout fd");
+            start_timed_out
+                .set(
+                    Expiration::OneShot(config.start_timeout.into()),
+                    TimerSetTimeFlags::empty(),
+                )
+                .expect("Cannot arm start timeout timerfd");
+
+            epoll
+                .add(
+                    start_timed_out.as_fd(),
+                    EpollEvent::new(
+                        EpollFlags::EPOLLIN,
+                        TYPE_SERVICE_START_TIMEOUT | u64::from(service.id),
+                    ),
+                )
+                .expect("Cannot add start time out epoll");
+
             epoll
                 .add(
                     exit_fd.as_fd(),
@@ -208,6 +232,7 @@ fn manager_thread() {
                 handle,
                 notifier: ready_fd,
                 exited_notifier: exit_fd,
+                start_timed_out,
             }
         }
 
@@ -281,6 +306,7 @@ fn manager_thread() {
             sandbox: Arc<B<dyn ISandbox>>,
             handle: Arc<B<dyn IProcessHandle>>,
             exited_notifier: Arc<EventFd>,
+            action_after_stopped: ActionAfterStopped,
         ) -> ServiceStateFull {
             let stop_requested_at = Instant::now();
             println!(
@@ -321,7 +347,7 @@ fn manager_thread() {
                 handle,
                 kill_timer,
                 exited_notifier,
-                start_on_stop: false,
+                action_after_stopped,
                 stop_requested_at,
             }
         }
@@ -347,11 +373,15 @@ fn manager_thread() {
                                         handle,
                                         notifier,
                                         exited_notifier,
+                                        start_timed_out,
                                     } => {
-                                        // Don't care about ready notifier anymore
+                                        // Don't care about ready notifier anymore and start timeout
                                         epoll
                                             .delete(notifier.as_fd())
                                             .expect("Cannot delete ready notifier eventfd");
+                                        epoll
+                                            .delete(start_timed_out.as_fd())
+                                            .expect("Cannot delete start timeout  timerfd");
                                         Ok(do_stopping(
                                             config,
                                             &epoll,
@@ -360,6 +390,7 @@ fn manager_thread() {
                                             sandbox,
                                             handle,
                                             exited_notifier,
+                                            ActionAfterStopped::Nothing,
                                         ))
                                     }
                                     ServiceStateFull::Started {
@@ -376,6 +407,7 @@ fn manager_thread() {
                                         sandbox,
                                         handle,
                                         exited_notifier,
+                                        ActionAfterStopped::Nothing,
                                     )),
                                     ServiceStateFull::WaitingToRestart {
                                         config,
@@ -393,7 +425,8 @@ fn manager_thread() {
                                         })
                                     }
                                     ServiceStateFull::Stopping {
-                                        start_on_stop: true,
+                                        action_after_stopped:
+                                            ActionAfterStopped::Start | ActionAfterStopped::Restart,
                                         config,
                                         crash_detail,
                                         sandbox,
@@ -408,11 +441,11 @@ fn manager_thread() {
                                         handle,
                                         kill_timer,
                                         exited_notifier,
-                                        start_on_stop: false,
+                                        action_after_stopped: ActionAfterStopped::Nothing,
                                         stop_requested_at,
                                     }),
                                     this @ (ServiceStateFull::Stopping {
-                                        start_on_stop: false,
+                                        action_after_stopped: ActionAfterStopped::Nothing,
                                         ..
                                     }
                                     | ServiceStateFull::Stopped { .. }
@@ -428,12 +461,12 @@ fn manager_thread() {
                                         matches!(
                                             next_state,
                                             ServiceStateFull::Stopping {
-                                                start_on_stop: false,
+                                                action_after_stopped: ActionAfterStopped::Nothing,
                                                 ..
                                             } | ServiceStateFull::Crashed { .. }
                                                 | ServiceStateFull::Stopped { .. },
                                         ),
-                                        "Next state suppose be stopping with no start_on_stop or crashed or stopped"
+                                        "Next state suppose be stopping with no other next state than nothing or crashed or stopped"
                                     );
                                     state.0 = next_state;
                                     state.1.call_all(());
@@ -449,61 +482,60 @@ fn manager_thread() {
                         }
                         Request::Start(service, fn_once) => {
                             let mut state = service.state.lock();
-                            let next_state =
-                                match mem::replace(&mut state.0, ServiceStateFull::Deleted) {
-                                    ServiceStateFull::Stopped {
-                                        config,
-                                        crash_detail,
-                                    }
-                                    | ServiceStateFull::Crashed {
-                                        config,
-                                        crash_detail,
-                                        ..
-                                    } => {
-                                        Ok(do_starting(rt, &epoll, &service, crash_detail, config))
-                                    }
-                                    ServiceStateFull::WaitingToRestart {
-                                        config,
-                                        crash_detail,
-                                        retry_timer,
-                                        ..
-                                    } => {
-                                        // User want to start early
-                                        epoll
-                                            .delete(retry_timer.as_fd())
-                                            .expect("Cannot remove timerfd for restarting");
+                            let next_state = match mem::replace(
+                                &mut state.0,
+                                ServiceStateFull::Deleted,
+                            ) {
+                                ServiceStateFull::Stopped {
+                                    config,
+                                    crash_detail,
+                                }
+                                | ServiceStateFull::Crashed {
+                                    config,
+                                    crash_detail,
+                                    ..
+                                } => Ok(do_starting(rt, &epoll, &service, crash_detail, config)),
+                                ServiceStateFull::WaitingToRestart {
+                                    config,
+                                    crash_detail,
+                                    retry_timer,
+                                    ..
+                                } => {
+                                    // User want to start early
+                                    epoll
+                                        .delete(retry_timer.as_fd())
+                                        .expect("Cannot remove timerfd for restarting");
 
-                                        Ok(do_starting(rt, &epoll, &service, crash_detail, config))
-                                    }
-                                    ServiceStateFull::Stopping {
-                                        start_on_stop: false,
-                                        config,
-                                        crash_detail,
-                                        sandbox,
-                                        handle,
-                                        kill_timer,
-                                        exited_notifier,
-                                        stop_requested_at,
-                                    } => Ok(ServiceStateFull::Stopping {
-                                        config,
-                                        crash_detail,
-                                        sandbox,
-                                        handle,
-                                        kill_timer,
-                                        exited_notifier,
-                                        start_on_stop: true,
-                                        stop_requested_at,
-                                    }),
-                                    this @ (ServiceStateFull::Stopping {
-                                        start_on_stop: true,
-                                        ..
-                                    }
-                                    | ServiceStateFull::Started { .. }
-                                    | ServiceStateFull::Starting { .. }) => Ok(this),
-                                    ServiceStateFull::Deleted => {
-                                        Err(RequestError::ServiceIsDeleted)
-                                    }
-                                };
+                                    Ok(do_starting(rt, &epoll, &service, crash_detail, config))
+                                }
+                                ServiceStateFull::Stopping {
+                                    action_after_stopped:
+                                        ActionAfterStopped::Nothing | ActionAfterStopped::Restart,
+                                    config,
+                                    crash_detail,
+                                    sandbox,
+                                    handle,
+                                    kill_timer,
+                                    exited_notifier,
+                                    stop_requested_at,
+                                } => Ok(ServiceStateFull::Stopping {
+                                    config,
+                                    crash_detail,
+                                    sandbox,
+                                    handle,
+                                    kill_timer,
+                                    exited_notifier,
+                                    action_after_stopped: ActionAfterStopped::Start,
+                                    stop_requested_at,
+                                }),
+                                this @ (ServiceStateFull::Stopping {
+                                    action_after_stopped: ActionAfterStopped::Start,
+                                    ..
+                                }
+                                | ServiceStateFull::Started { .. }
+                                | ServiceStateFull::Starting { .. }) => Ok(this),
+                                ServiceStateFull::Deleted => Err(RequestError::ServiceIsDeleted),
+                            };
 
                             match next_state {
                                 Ok(next_state) => {
@@ -511,7 +543,8 @@ fn manager_thread() {
                                         matches!(
                                             next_state,
                                             ServiceStateFull::Stopping {
-                                                start_on_stop: true,
+                                                action_after_stopped: ActionAfterStopped::Restart
+                                                    | ActionAfterStopped::Start,
                                                 ..
                                             } | ServiceStateFull::Starting { .. }
                                                 | ServiceStateFull::Started { .. },
@@ -547,6 +580,50 @@ fn manager_thread() {
             }
 
             match kind {
+                TYPE_SERVICE_START_TIMEOUT => {
+                    let ServiceStateFull::Starting {
+                        sandbox,
+                        config,
+                        crash_detail,
+                        handle,
+                        notifier,
+                        exited_notifier,
+                        start_timed_out,
+                    } = mem::replace(&mut state.0, ServiceStateFull::Deleted)
+                    else {
+                        unreachable!("service should be just starting")
+                    };
+                    println!(
+                        "service_manager: Service '{}' took too long to start >= {:.2} secs",
+                        config.name,
+                        config.start_timeout.as_secs_f32()
+                    );
+
+                    // Don't need to read the notifier, reading it would mean
+                    // service manager acknowledge if its ready, but manager
+                    // wont acknowledge it.
+                    epoll
+                        .delete(notifier.as_fd())
+                        .expect("Cannot remove ready notifier eventfd from epoll");
+                    epoll
+                        .delete(start_timed_out.as_fd())
+                        .expect("Cannot remove start timeout timerfd from epoll");
+                    start_timed_out
+                        .unset()
+                        .expect("Cannot disarm the timeerfd for start timeout");
+
+                    state.0 = do_stopping(
+                        config,
+                        &epoll,
+                        service,
+                        crash_detail,
+                        sandbox,
+                        handle,
+                        exited_notifier,
+                        ActionAfterStopped::Restart,
+                    );
+                    state.1.call_all(());
+                }
                 TYPE_SERVICE_NEED_SIGKILL => {
                     let ServiceStateFull::Stopping {
                         sandbox,
@@ -582,6 +659,7 @@ fn manager_thread() {
                         handle,
                         notifier,
                         exited_notifier,
+                        start_timed_out,
                     } = mem::replace(&mut state.0, ServiceStateFull::Deleted)
                     else {
                         unreachable!("Service has to be 'starting'")
@@ -590,7 +668,14 @@ fn manager_thread() {
                     epoll
                         .delete(notifier.as_fd())
                         .expect("Cannot remove started eventfd");
+
+                    // NOTE: This is needed event we know its fired out. Mainly because
+                    // there visible effects to outside of this process
                     notifier.read().expect("Cannot consume eventfd event");
+
+                    epoll
+                        .delete(start_timed_out.as_fd())
+                        .expect("Cannot remove start timeout timerfd");
 
                     state.0 = ServiceStateFull::Started {
                         config,
@@ -630,6 +715,7 @@ fn manager_thread() {
                             handle,
                             notifier,
                             exited_notifier,
+                            start_timed_out,
                         } => {
                             // Service crashed
                             epoll
@@ -638,6 +724,9 @@ fn manager_thread() {
                             epoll
                                 .delete(notifier.as_fd())
                                 .expect("Cannot remove eventfd for exit notifier");
+                            epoll
+                                .delete(start_timed_out.as_fd())
+                                .expect("Cannot remove timerfd for start timeout");
                             let reason = handle
                                 .get_exit_reason()
                                 .flatten()
@@ -674,7 +763,7 @@ fn manager_thread() {
                             sandbox,
                             mut crash_detail,
                             kill_timer,
-                            start_on_stop,
+                            action_after_stopped,
                             stop_requested_at,
                         } => {
                             // Service stopped either by kill_timer expiration or exited
@@ -705,12 +794,21 @@ fn manager_thread() {
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );
 
-                                if start_on_stop {
-                                    do_starting(rt, &epoll, &service, crash_detail, config)
-                                } else {
-                                    ServiceStateFull::Stopped {
+                                match action_after_stopped {
+                                    ActionAfterStopped::Nothing => ServiceStateFull::Stopped {
                                         config,
                                         crash_detail,
+                                    },
+                                    ActionAfterStopped::Restart => do_restarting(
+                                        sandbox,
+                                        &epoll,
+                                        service,
+                                        crash_detail,
+                                        reason,
+                                        config,
+                                    ),
+                                    ActionAfterStopped::Start => {
+                                        do_starting(rt, &epoll, &service, crash_detail, config)
                                     }
                                 }
                             } else {
@@ -720,13 +818,22 @@ fn manager_thread() {
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );
                                 crash_detail.service_just_crashed();
-                                if start_on_stop {
-                                    do_starting(rt, &epoll, &service, crash_detail, config)
-                                } else {
-                                    ServiceStateFull::Crashed {
+                                match action_after_stopped {
+                                    ActionAfterStopped::Nothing => ServiceStateFull::Crashed {
                                         config,
                                         crash_detail,
                                         exit_reason: reason,
+                                    },
+                                    ActionAfterStopped::Restart => do_restarting(
+                                        sandbox,
+                                        &epoll,
+                                        service,
+                                        crash_detail,
+                                        reason,
+                                        config,
+                                    ),
+                                    ActionAfterStopped::Start => {
+                                        do_starting(rt, &epoll, &service, crash_detail, config)
                                     }
                                 }
                             }

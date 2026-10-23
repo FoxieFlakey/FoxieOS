@@ -79,7 +79,7 @@ impl Sandbox {
             cmd.arg("--");
             cmd
         } else {
-            Command::new(TTY_SPAWNER_PATH)
+            Command::new(SANDBOXER_HELPER_PATH)
         };
 
         helper.arg("--procs-fd");
