@@ -1,4 +1,7 @@
-use std::sync::{Arc, Weak};
+use std::{
+    io,
+    sync::{Arc, Weak},
+};
 
 use anyhow::anyhow;
 use libbinder::{
@@ -6,6 +9,7 @@ use libbinder::{
     object::{B, ObjectTrait},
 };
 use libbinder_basic::binder_ipc_object;
+use nix::errno::Errno;
 use parking_lot::Mutex;
 
 use crate::{IObject, iobject};
@@ -69,5 +73,46 @@ impl FnOnceObject {
             Mutex::new(Some(Box::new(closure))),
             rt,
         )))
+    }
+}
+
+mod private {
+    pub trait Sealed {}
+}
+
+pub trait IsEIntr: private::Sealed {
+    fn is_eintr(&self) -> bool;
+}
+
+impl private::Sealed for Errno {}
+impl IsEIntr for Errno {
+    fn is_eintr(&self) -> bool {
+        matches!(self, Errno::EINTR)
+    }
+}
+
+impl private::Sealed for io::Error {}
+impl IsEIntr for io::Error {
+    fn is_eintr(&self) -> bool {
+        matches!(self.kind(), io::ErrorKind::Interrupted)
+    }
+}
+
+pub fn retry_eintr<T, E, F>(mut func: F) -> Result<T, E>
+where
+    F: FnMut() -> Result<T, E>,
+    E: IsEIntr,
+{
+    loop {
+        match func() {
+            Ok(x) => return Ok(x),
+            Err(e) => {
+                if e.is_eintr() {
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
     }
 }

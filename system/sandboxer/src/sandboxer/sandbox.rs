@@ -6,6 +6,8 @@ use std::{
     },
     process::Command,
     sync::{Arc, Weak},
+    thread::sleep,
+    time::Duration,
 };
 
 use anyhow::{Context, anyhow};
@@ -14,10 +16,11 @@ use foxie_base::{
     IObject, iobject,
     sandboxer::{IProcessHandle, ISandbox, SpawnArgs, isandbox},
     uids,
+    util::retry_eintr,
 };
 use libbinder::object::{B, ObjectTrait};
 use libbinder_basic::packetable::Serde;
-use nix::unistd::{Pid, Uid, sleep};
+use nix::unistd::{Pid, Uid};
 use openat::Dir;
 use parking_lot::Mutex;
 use pidfd_util::PidFdExtFoxie;
@@ -48,25 +51,20 @@ impl Sandbox {
     }
 
     fn kill_all(&self) {
-        let mut kill_file = self
-            .get_inner()
-            .cgroup
-            .write_file("cgroup.kill", 0o600)
-            .expect("Cannot open kill file");
+        let mut kill_file =
+            retry_eintr(|| self.get_inner().cgroup.write_file("cgroup.kill", 0o600))
+                .expect("Cannot open kill file");
         writeln!(&mut kill_file, "1").expect("Cannot write kill file");
     }
 
     fn spawn(&self, args: Serde<SpawnArgs>) -> anyhow::Result<Arc<B<dyn IProcessHandle>>> {
-        let procs_fd = self
-            .get_inner()
-            .cgroup
-            .write_file("cgroup.procs", 0o600)
+        let procs_fd = retry_eintr(|| self.get_inner().cgroup.write_file("cgroup.procs", 0o600))
             .context("Cannot open cgroup.procs")
             .map(OwnedFd::from)?;
         let mnt_namespace_fd = nix::unistd::dup(self.get_inner().mnt_namespace.as_fd())
             .context("Cannot dup namespace fd")?;
-        let root_fd =
-            nix::unistd::dup(self.get_inner().root_fd.as_fd()).context("Cannot dup root fd")?;
+        let root_fd = retry_eintr(|| nix::unistd::dup(self.get_inner().root_fd.as_fd()))
+            .context("Cannot dup root fd")?;
 
         // Asking helper to downgrade privilege, mainly because its complicated
         // to do in same process a.k.a very fragile with .pre_exec
@@ -104,8 +102,7 @@ impl Sandbox {
         helper.preserved_fds(vec![procs_fd, mnt_namespace_fd, root_fd]);
         helper.create_pidfd(true);
 
-        let child = helper
-            .spawn()
+        let child = retry_eintr(|| helper.spawn())
             .context("Cannot spawn sandboxed process thru helper binary")?;
         let pid = child.id();
         let pidfd = child
@@ -127,9 +124,7 @@ impl Sandbox {
             .unwrap()
             .send(handle.clone())
             .expect("Cannot send pidfd to sandboxer's reaper to be watched");
-        super::REAPER_WAKE
-            .write(1)
-            .expect("Cannot wake up sandboxer's reaper");
+        retry_eintr(|| super::REAPER_WAKE.write(1)).expect("Cannot wake up sandboxer's reaper");
 
         Ok(handle)
     }
@@ -144,8 +139,7 @@ impl Inner {
         }
 
         // Try rm dir the cgroup directory
-        super::get_cgroup_dir()
-            .remove_dir(&format!("{}", self.id))
+        retry_eintr(|| super::get_cgroup_dir().remove_dir(&format!("{}", self.id)))
             .context("Removing cgroup dir")?;
 
         // Succesfully destroyed, release the ID
@@ -177,7 +171,7 @@ impl Drop for Sandbox {
                     // and retries 5 times
                     let mut err = None;
                     for _ in 0..5 {
-                        sleep(1);
+                        sleep(Duration::from_secs(1));
 
                         if let Err(e) = sandbox.destroy() {
                             err = Some(e);

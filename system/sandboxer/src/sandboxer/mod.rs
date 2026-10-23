@@ -14,10 +14,9 @@ use std::{
 };
 
 use anyhow::Context;
-use foxie_base::{common::SerdeSignal, sandboxer::ExitReason};
+use foxie_base::{common::SerdeSignal, sandboxer::ExitReason, util::retry_eintr};
 use libbinder::object::B;
 use nix::{
-    errno::Errno,
     fcntl::{OFlag, open},
     mount::{MntFlags, MsFlags, mount, umount2},
     poll::{PollFd, PollFlags, PollTimeout, poll},
@@ -73,7 +72,7 @@ pub fn shutdown() {
     BACKGROUND_THRD.lock().take().unwrap().join().unwrap();
 
     drop(REAPER_QUEUE.write().take());
-    REAPER_WAKE.write(1).expect("Cannot wake reaper");
+    retry_eintr(|| REAPER_WAKE.write(1)).expect("Cannot wake reaper");
     REAPER_THRD.lock().take().unwrap().join().unwrap();
 }
 
@@ -97,22 +96,11 @@ pub fn init() -> anyhow::Result<()> {
                 PollFd::new(REAPER_WAKE.as_fd(), PollFlags::POLLIN),
             ];
 
-            loop {
-                let Err(e) = poll(&mut pollfds, PollTimeout::NONE) else {
-                    break;
-                };
-
-                if e == Errno::EINTR {
-                    // Interrupted
-                    continue;
-                }
-                Err::<(), _>(e).expect("Cannot poll");
-            }
+            retry_eintr(|| poll(&mut pollfds, PollTimeout::NONE)).expect("Cannot poll");
 
             if !pollfds[0].revents().unwrap().is_empty() {
                 let mut events = [EpollEvent::empty(); 100];
-                let count = epoll
-                    .wait(&mut events, None::<PollTimeout>)
+                let count = retry_eintr(|| epoll.wait(&mut events, None::<PollTimeout>))
                     .expect("Cannot epoll on pifds");
 
                 for event in &events[0..count] {
@@ -120,11 +108,10 @@ pub fn init() -> anyhow::Result<()> {
                     let process = watched
                         .remove(&event.data())
                         .expect("There should be pidfd here");
-                    epoll
-                        .delete(process.pidfd.as_fd())
+                    retry_eintr(|| epoll.delete(process.pidfd.as_fd()))
                         .expect("Cannot remove pidfd from epoll");
 
-                    process.pidfd.wait().expect("Cannot reap process");
+                    retry_eintr(|| process.pidfd.wait()).expect("Cannot reap process");
                     let mut death_reason = process.death_reason.lock();
                     match process
                         .pidfd
@@ -152,7 +139,7 @@ pub fn init() -> anyhow::Result<()> {
 
             // There request incoming
             if !pollfds[1].revents().unwrap().is_empty() {
-                REAPER_WAKE.read().expect("Cannot ackowledge the wakeup");
+                retry_eintr(|| REAPER_WAKE.read()).expect("Cannot ackowledge the wakeup");
                 loop {
                     match receiver.try_recv() {
                         Ok(x) => {

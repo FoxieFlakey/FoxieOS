@@ -71,8 +71,14 @@ impl PidFdExtFoxie for PidFd {
         let mut info: libc::pidfd_info = unsafe { std::mem::zeroed() };
         info.mask = libc::__u64::from(libc::PIDFD_INFO_EXIT | libc::PIDFD_INFO_PID);
 
-        if unsafe { libc::ioctl(self.as_raw_fd(), libc::PIDFD_GET_INFO, &mut info) } < 0 {
-            return Err(Errno::last());
+        loop {
+            if unsafe { libc::ioctl(self.as_raw_fd(), libc::PIDFD_GET_INFO, &mut info) } < 0 {
+                if Errno::last() == Errno::EINTR {
+                    continue;
+                }
+                return Err(Errno::last());
+            }
+            break;
         }
 
         if info.mask & libc::__u64::from(libc::PIDFD_INFO_EXIT | libc::PIDFD_INFO_PID) == 0 {
@@ -86,21 +92,26 @@ impl PidFdExtFoxie for PidFd {
     }
 
     fn send_signal(&self, sig: Signal) -> Result<(), Errno> {
-        let res = unsafe {
-            syscall(
-                SYS_pidfd_send_signal,
-                c_int::from(self.as_raw_fd()),
-                c_int::from(sig as i32),
-                0 as *mut c_void,
-                c_uint::from(0u32),
-            )
-        };
+        loop {
+            let res = unsafe {
+                syscall(
+                    SYS_pidfd_send_signal,
+                    c_int::from(self.as_raw_fd()),
+                    c_int::from(sig as i32),
+                    0 as *mut c_void,
+                    c_uint::from(0u32),
+                )
+            };
 
-        if res == -1 {
-            Err(Errno::last())
-        } else {
-            assert!(res == 0);
-            Ok(())
+            if res == -1 {
+                if Errno::last() == Errno::EINTR {
+                    continue;
+                }
+                return Err(Errno::last());
+            } else {
+                assert!(res == 0);
+                return Ok(());
+            }
         }
     }
 }

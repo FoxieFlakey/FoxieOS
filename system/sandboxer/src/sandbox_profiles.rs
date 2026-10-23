@@ -4,6 +4,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context;
+use foxie_base::util::retry_eintr;
 use nix::{
     mount::{MsFlags, mount},
     unistd::Uid,
@@ -35,17 +36,19 @@ fn app_profile(uid: Uid) -> anyhow::Result<()> {
 }
 
 fn restrict_proc_profile(_uid: Uid) -> anyhow::Result<()> {
-    mount(
-        None::<&Path>,
-        "/proc",
-        Some("proc"),
-        MsFlags::MS_NOATIME
-            | MsFlags::MS_NODIRATIME
-            | MsFlags::MS_NODEV
-            | MsFlags::MS_NOEXEC
-            | MsFlags::MS_NOSUID,
-        Some("hidepid=2"),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/proc",
+            Some("proc"),
+            MsFlags::MS_NOATIME
+                | MsFlags::MS_NODIRATIME
+                | MsFlags::MS_NODEV
+                | MsFlags::MS_NOEXEC
+                | MsFlags::MS_NOSUID,
+            Some("hidepid=2"),
+        )
+    })
     .context("Cannot mount proc")?;
     Ok(())
 }
@@ -63,14 +66,16 @@ where
     P: AsRef<Path>,
 {
     let dev_path = dev_path.as_ref().to_path_buf();
-    fs::create_dir_all(dev_path.join("pts")).context("Creating pts directory")?;
-    mount(
-        None::<&Path>,
-        &dev_path.join("pts"),
-        Some("devpts"),
-        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOSUID,
-        Some(&*format!("max=500,mode=600,uid={uid},gid={uid}")),
-    )
+    retry_eintr(|| fs::create_dir_all(dev_path.join("pts"))).context("Creating pts directory")?;
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            &dev_path.join("pts"),
+            Some("devpts"),
+            MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOSUID,
+            Some(&*format!("max=500,mode=600,uid={uid},gid={uid}")),
+        )
+    })
     .context("Cannot create per sandbox devpts")?;
 
     bind("/orig_root/dev/binder", dev_path.join("binder"), false)
@@ -79,22 +84,26 @@ where
 }
 
 fn base_profile(uid: Uid) -> anyhow::Result<()> {
-    mount(
-        None::<&Path>,
-        "/tmp",
-        Some("tmpfs"),
-        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NODEV | MsFlags::MS_NOSUID,
-        Some(&*format!("size=32M,nr_inodes=1000,uid={uid},gid={uid}")),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/tmp",
+            Some("tmpfs"),
+            MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NODEV | MsFlags::MS_NOSUID,
+            Some(&*format!("size=32M,nr_inodes=1000,uid={uid},gid={uid}")),
+        )
+    })
     .context("Cannot create per sandbox /tmp")?;
 
-    mount(
-        None::<&Path>,
-        "/dev",
-        Some("tmpfs"),
-        MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
-        None::<&Path>,
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            "/dev",
+            Some("tmpfs"),
+            MsFlags::MS_NOATIME | MsFlags::MS_NODIRATIME | MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
+            None::<&Path>,
+        )
+    })
     .context("Cannot mount dev")?;
     base_dev_stuffs(uid, "/dev").context("Mounting stuffs under /dev")?;
     Ok(())
@@ -110,13 +119,15 @@ where
         flags |= MsFlags::MS_REC;
     }
 
-    mount(
-        Some(src.as_ref()),
-        dest.as_ref(),
-        None::<&Path>,
-        flags,
-        None::<&Path>,
-    )
+    retry_eintr(|| {
+        mount(
+            Some(src.as_ref()),
+            dest.as_ref(),
+            None::<&Path>,
+            flags,
+            None::<&Path>,
+        )
+    })
     .with_context(|| {
         format!(
             "Bind mounting {} to {}",
@@ -134,13 +145,15 @@ fn hide_mount(path: &str) -> Result<(), anyhow::Error> {
         | MsFlags::MS_NOEXEC
         | MsFlags::MS_NOSUID;
     let empty_tmpfs_data = "size=0,nr_inodes=1,uid=0,gid=0";
-    mount(
-        None::<&Path>,
-        path,
-        Some("tmpfs"),
-        flags,
-        Some(empty_tmpfs_data),
-    )
+    retry_eintr(|| {
+        mount(
+            None::<&Path>,
+            path,
+            Some("tmpfs"),
+            flags,
+            Some(empty_tmpfs_data),
+        )
+    })
     .with_context(|| format!("Cannot hide {path}"))?;
     Ok(())
 }

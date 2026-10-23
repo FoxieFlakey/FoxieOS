@@ -11,12 +11,11 @@ use anyhow::Context;
 use foxie_base::{
     common::SerdeSignal,
     sandboxer::{self, ExitReason, IProcessHandle, ISandbox, SpawnArgs},
-    util::FnOnceObject,
+    util::{FnOnceObject, retry_eintr},
 };
 use libbinder::{Runtime, object::B};
 use libbinder_basic::packetable::Serde;
 use nix::{
-    errno::Errno,
     poll::PollTimeout,
     sys::{
         epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
@@ -77,9 +76,7 @@ pub fn get_manager() -> &'static ServiceManager {
 impl ServiceManager {
     fn enqueue_req(&self, req: Request) {
         self.state.lock().reqs.push_back(req);
-        self.wake_up
-            .write(1)
-            .expect("Cannot wake up manager thread");
+        retry_eintr(|| self.wake_up.write(1)).expect("Cannot wake up manager thread");
     }
 }
 
@@ -124,25 +121,24 @@ fn manager_thread() {
 
     nix::sys::prctl::set_name(&c"Manager thread").unwrap();
 
-    let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC).expect("Cannot create epoll fd");
+    let epoll = retry_eintr(|| Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC))
+        .expect("Cannot create epoll fd");
     let manager = SINGLETON.get().unwrap();
 
-    epoll
-        .add(
+    retry_eintr(|| {
+        epoll.add(
             manager.wake_up.as_fd(),
             EpollEvent::new(EpollFlags::EPOLLIN, TYPE_WAKEUP_FD),
         )
-        .expect("Cannot add wake up fd to epoll");
+    })
+    .expect("Cannot add wake up fd to epoll");
 
     // NOTE: DO NOT INCREASE THIS LIMIT! There no mechanism to handle
     // stale events
     let mut buf = [EpollEvent::empty(); 1];
     loop {
-        let count = match epoll.wait(&mut buf, PollTimeout::NONE) {
-            Ok(x) => x,
-            Err(Errno::EINTR) => 0,
-            Err(e) => panic!("Cannot epoll wait: {e}"),
-        };
+        let count = retry_eintr(|| epoll.wait(&mut buf, PollTimeout::NONE))
+            .expect("Cannot epoll wait: {e}");
 
         fn do_starting(
             rt: &Weak<Runtime>,
@@ -169,61 +165,67 @@ fn manager_thread() {
                 }))
                 .flatten()
                 .expect("Cannot start service");
-            let ready_fd = EventFd::new().expect("Cannot create event fd for service ready");
-            let exit_fd =
-                Arc::new(EventFd::new().expect("Cannot create event fd for service exit"));
+            let ready_fd =
+                retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service ready");
+            let exit_fd = Arc::new(
+                retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service exit"),
+            );
 
             let cloned = exit_fd.clone();
             handle
                 .on_death(FnOnceObject::new(rt.clone(), move || {
-                    cloned
-                        .write(1)
+                    retry_eintr(|| cloned.write(1))
                         .expect("Cannot write to eventfd that process is dead");
                 }))
                 .flatten()
                 .expect("Cannot register death listener for service's process");
 
             // Currently havent passed it to service yet about ready status
-            ready_fd.write(1).expect("Cannot fire ready_fd");
+            retry_eintr(|| ready_fd.write(1)).expect("Cannot fire ready_fd");
 
-            let start_timed_out = TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC)
-                .expect("Cannot create timeout fd");
-            start_timed_out
-                .set(
+            let start_timed_out =
+                retry_eintr(|| TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC))
+                    .expect("Cannot create timeout fd");
+            retry_eintr(|| {
+                start_timed_out.set(
                     Expiration::OneShot(config.start_timeout.into()),
                     TimerSetTimeFlags::empty(),
                 )
-                .expect("Cannot arm start timeout timerfd");
+            })
+            .expect("Cannot arm start timeout timerfd");
 
-            epoll
-                .add(
+            retry_eintr(|| {
+                epoll.add(
                     start_timed_out.as_fd(),
                     EpollEvent::new(
                         EpollFlags::EPOLLIN,
                         TYPE_SERVICE_START_TIMEOUT | u64::from(service.id),
                     ),
                 )
-                .expect("Cannot add start time out epoll");
+            })
+            .expect("Cannot add start time out epoll");
 
-            epoll
-                .add(
+            retry_eintr(|| {
+                epoll.add(
                     exit_fd.as_fd(),
                     EpollEvent::new(
                         EpollFlags::EPOLLIN,
                         TYPE_SERVICE_DEATH | u64::from(service.id),
                     ),
                 )
-                .expect("Cannot add exit fd to epoll");
+            })
+            .expect("Cannot add exit fd to epoll");
 
-            epoll
-                .add(
+            retry_eintr(|| {
+                epoll.add(
                     ready_fd.as_fd(),
                     EpollEvent::new(
                         EpollFlags::EPOLLIN,
                         TYPE_SERVICE_STARTED | u64::from(service.id),
                     ),
                 )
-                .expect("Cannot add ready fd to epoll");
+            })
+            .expect("Cannot add ready fd to epoll");
 
             ServiceStateFull::Starting {
                 config,
@@ -259,23 +261,26 @@ fn manager_thread() {
                     crash_detail.crash_count()
                 );
 
-                let retry_timer = TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC)
-                    .expect("Cannot create timerfd for scheduling restart");
-                retry_timer
-                    .set(
+                let retry_timer =
+                    retry_eintr(|| TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC))
+                        .expect("Cannot create timerfd for scheduling restart");
+                retry_eintr(|| {
+                    retry_timer.set(
                         Expiration::OneShot(config.retry_delay.into()),
                         TimerSetTimeFlags::empty(),
                     )
-                    .expect("Cannot arm timerfd");
-                epoll
-                    .add(
+                })
+                .expect("Cannot arm timerfd");
+                retry_eintr(|| {
+                    epoll.add(
                         retry_timer.as_fd(),
                         EpollEvent::new(
                             EpollFlags::EPOLLIN,
                             TYPE_SERVICE_DO_RESTART | u64::from(service.id),
                         ),
                     )
-                    .expect("Cannot add retry timer fd to epoll");
+                })
+                .expect("Cannot add retry timer fd to epoll");
 
                 ServiceStateFull::WaitingToRestart {
                     config,
@@ -316,23 +321,26 @@ fn manager_thread() {
                 config.graceful_delay.as_secs_f32()
             );
 
-            let kill_timer = TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC)
-                .expect("Cannot create kill timerfd");
-            kill_timer
-                .set(
+            let kill_timer =
+                retry_eintr(|| TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC))
+                    .expect("Cannot create kill timerfd");
+            retry_eintr(|| {
+                kill_timer.set(
                     Expiration::OneShot(config.graceful_delay.into()),
                     TimerSetTimeFlags::empty(),
                 )
-                .expect("Cannot arm kill timerfd");
-            epoll
-                .add(
+            })
+            .expect("Cannot arm kill timerfd");
+            retry_eintr(|| {
+                epoll.add(
                     kill_timer.as_fd(),
                     EpollEvent::new(
                         EpollFlags::EPOLLIN,
                         TYPE_SERVICE_NEED_SIGKILL | u64::from(service.id),
                     ),
                 )
-                .expect("Cannot add kill timerfd to epoll");
+            })
+            .expect("Cannot add kill timerfd to epoll");
 
             // Send graceful signal to process
             handle
@@ -357,7 +365,7 @@ fn manager_thread() {
         for event in &buf[0..count] {
             let kind = event.data() & !u64::from(u32::MAX);
             if kind == TYPE_WAKEUP_FD {
-                manager.wake_up.read().expect("Cannot read wakeup");
+                retry_eintr(|| manager.wake_up.read()).expect("Cannot read wakeup");
 
                 // Is waken up to handle requests
                 for req in manager_lock.reqs.drain(..) {
@@ -376,11 +384,9 @@ fn manager_thread() {
                                         start_timed_out,
                                     } => {
                                         // Don't care about ready notifier anymore and start timeout
-                                        epoll
-                                            .delete(notifier.as_fd())
+                                        retry_eintr(|| epoll.delete(notifier.as_fd()))
                                             .expect("Cannot delete ready notifier eventfd");
-                                        epoll
-                                            .delete(start_timed_out.as_fd())
+                                        retry_eintr(|| epoll.delete(start_timed_out.as_fd()))
                                             .expect("Cannot delete start timeout  timerfd");
                                         Ok(do_stopping(
                                             config,
@@ -415,8 +421,7 @@ fn manager_thread() {
                                         exit_reason,
                                         retry_timer,
                                     } => {
-                                        epoll
-                                            .delete(retry_timer.as_fd())
+                                        retry_eintr(|| epoll.delete(retry_timer.as_fd()))
                                             .expect("Cannot remove retry timer");
                                         Ok(ServiceStateFull::Crashed {
                                             config,
@@ -502,8 +507,7 @@ fn manager_thread() {
                                     ..
                                 } => {
                                     // User want to start early
-                                    epoll
-                                        .delete(retry_timer.as_fd())
+                                    retry_eintr(|| epoll.delete(retry_timer.as_fd()))
                                         .expect("Cannot remove timerfd for restarting");
 
                                     Ok(do_starting(rt, &epoll, &service, crash_detail, config))
@@ -602,14 +606,11 @@ fn manager_thread() {
                     // Don't need to read the notifier, reading it would mean
                     // service manager acknowledge if its ready, but manager
                     // wont acknowledge it.
-                    epoll
-                        .delete(notifier.as_fd())
+                    retry_eintr(|| epoll.delete(notifier.as_fd()))
                         .expect("Cannot remove ready notifier eventfd from epoll");
-                    epoll
-                        .delete(start_timed_out.as_fd())
+                    retry_eintr(|| epoll.delete(start_timed_out.as_fd()))
                         .expect("Cannot remove start timeout timerfd from epoll");
-                    start_timed_out
-                        .unset()
+                    retry_eintr(|| start_timed_out.unset())
                         .expect("Cannot disarm the timeerfd for start timeout");
 
                     state.0 = do_stopping(
@@ -642,7 +643,7 @@ fn manager_thread() {
                         stop_requested_at.elapsed().as_secs_f32()
                     );
 
-                    kill_timer.unset().expect("Cannot disarm kill timer");
+                    retry_eintr(|| kill_timer.unset()).expect("Cannot disarm kill timer");
                     sandbox
                         .kill_all()
                         .flatten()
@@ -665,16 +666,14 @@ fn manager_thread() {
                         unreachable!("Service has to be 'starting'")
                     };
 
-                    epoll
-                        .delete(notifier.as_fd())
+                    retry_eintr(|| epoll.delete(notifier.as_fd()))
                         .expect("Cannot remove started eventfd");
 
                     // NOTE: This is needed event we know its fired out. Mainly because
                     // there visible effects to outside of this process
-                    notifier.read().expect("Cannot consume eventfd event");
+                    retry_eintr(|| notifier.read()).expect("Cannot consume eventfd event");
 
-                    epoll
-                        .delete(start_timed_out.as_fd())
+                    retry_eintr(|| epoll.delete(start_timed_out.as_fd()))
                         .expect("Cannot remove start timeout timerfd");
 
                     state.0 = ServiceStateFull::Started {
@@ -697,8 +696,7 @@ fn manager_thread() {
                         unreachable!("service should be just WaitingToRestart")
                     };
 
-                    epoll
-                        .delete(retry_timer.as_fd())
+                    retry_eintr(|| epoll.delete(retry_timer.as_fd()))
                         .expect("Cannot remove retry timerfd on restart");
 
                     println!("service_manager: Restarting '{}'", config.name);
@@ -718,14 +716,11 @@ fn manager_thread() {
                             start_timed_out,
                         } => {
                             // Service crashed
-                            epoll
-                                .delete(exited_notifier.as_fd())
+                            retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
                                 .expect("Cannot remove eventfd for exit notifier");
-                            epoll
-                                .delete(notifier.as_fd())
+                            retry_eintr(|| epoll.delete(notifier.as_fd()))
                                 .expect("Cannot remove eventfd for exit notifier");
-                            epoll
-                                .delete(start_timed_out.as_fd())
+                            retry_eintr(|| epoll.delete(start_timed_out.as_fd()))
                                 .expect("Cannot remove timerfd for start timeout");
                             let reason = handle
                                 .get_exit_reason()
@@ -744,8 +739,7 @@ fn manager_thread() {
                             exited_notifier,
                         } => {
                             // Service crashed
-                            epoll
-                                .delete(exited_notifier.as_fd())
+                            retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
                                 .expect("Cannot remove eventfd for exit notifier");
                             let reason = handle
                                 .get_exit_reason()
@@ -767,11 +761,9 @@ fn manager_thread() {
                             stop_requested_at,
                         } => {
                             // Service stopped either by kill_timer expiration or exited
-                            epoll
-                                .delete(exited_notifier.as_fd())
+                            retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
                                 .expect("Cannot remove eventfd for exit notifier");
-                            epoll
-                                .delete(kill_timer.as_fd())
+                            retry_eintr(|| epoll.delete(kill_timer.as_fd()))
                                 .expect("Cannot remove eventfd for kill timer");
 
                             let reason = handle

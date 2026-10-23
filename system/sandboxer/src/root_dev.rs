@@ -1,6 +1,7 @@
 use std::{fs, sync::OnceLock};
 
 use anyhow::{Context, bail};
+use foxie_base::util::retry_eintr;
 use nix::sys::stat::{SFlag, major, minor, stat};
 
 static ROOT_DEV_PATH: OnceLock<String> = OnceLock::new();
@@ -14,11 +15,11 @@ pub fn discover_root() -> anyhow::Result<()> {
     let major_id = major(stats.st_dev);
     let minor_id = minor(stats.st_dev);
 
-    for entry in fs::read_dir("/dev")? {
+    for entry in retry_eintr(|| fs::read_dir("/dev"))? {
         let entry = entry.context("Cannot get directory entry in /dev")?;
         let path = entry.path();
 
-        if let Ok(stats) = stat(&path) {
+        if let Ok(stats) = retry_eintr(|| stat(&path)) {
             let file_type = SFlag::from_bits_truncate(stats.st_mode);
             if file_type.contains(SFlag::S_IFBLK) {
                 if major(stats.st_rdev) == major_id && minor(stats.st_rdev) == minor_id {
