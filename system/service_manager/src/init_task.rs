@@ -1,6 +1,5 @@
 use std::{
     sync::{Arc, OnceLock, Weak},
-    thread::sleep,
     time::Duration,
 };
 

@@ -235,6 +235,7 @@ impl Service {
         receiver.recv().expect("Sender cant be dead")
     }
 
+    #[expect(unused)]
     pub fn stop(self: &Arc<Service>) -> Result<(), RequestError> {
         let (sender, receiver) = oneshot::channel();
         service_manager::get_manager().enqueue_req(Request::Stop(
