@@ -87,6 +87,7 @@ pub(super) enum ServiceStateFull {
         crash_detail: CrashDetail,
         sandbox: Arc<B<dyn ISandbox>>,
         handle: Arc<B<dyn IProcessHandle>>,
+        starting_since: Instant,
 
         // Services can notify via this if they're
         // ready or started or without support already
@@ -101,6 +102,8 @@ pub(super) enum ServiceStateFull {
         sandbox: Arc<B<dyn ISandbox>>,
         handle: Arc<B<dyn IProcessHandle>>,
         exited_notifier: Arc<EventFd>,
+        starting_since: Instant,
+        started_since: Instant,
     },
     Stopping {
         config: Config,
@@ -114,6 +117,8 @@ pub(super) enum ServiceStateFull {
         exited_notifier: Arc<EventFd>,
         action_after_stopped: ActionAfterStopped,
         stop_requested_at: Instant,
+        starting_since: Instant,
+        started_since: Option<Instant>,
     },
     Stopped {
         config: Config,

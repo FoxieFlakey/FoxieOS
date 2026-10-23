@@ -249,6 +249,7 @@ fn manager_thread() {
                 notifier: ready_fd,
                 exited_notifier: exit_fd,
                 start_timed_out,
+                starting_since: Instant::now(),
             }
         }
 
@@ -259,6 +260,8 @@ fn manager_thread() {
             mut crash_detail: CrashDetail,
             reason: ExitReason,
             config: service::Config,
+            starting_since: Option<Instant>,
+            started_since: Option<Instant>,
         ) -> ServiceStateFull {
             // Kill all processes running
             sandbox
@@ -267,12 +270,26 @@ fn manager_thread() {
                 .expect("Cannot kill all processes in service on crash");
             crash_detail.service_just_crashed();
 
+            let txt = match (starting_since, started_since) {
+                (None, None) => String::new(),
+                (None, Some(_)) => unreachable!(),
+                (Some(starting_since), None) => format!(
+                    " and service is running for {:.2} secs",
+                    starting_since.elapsed().as_secs_f32()
+                ),
+                (Some(starting_since), Some(started_since)) => format!(
+                    " and service is running for {:.2} secs and spent {:.2} secs in startup",
+                    starting_since.elapsed().as_secs_f32(),
+                    (starting_since.elapsed() - started_since.elapsed()).as_secs_f32()
+                ),
+            };
             if crash_detail.is_allowed_to_restart() {
                 println!(
-                    "service_manager: Service '{}' crashed with {reason}, retrying in {:.3} secs (fails {} times)",
+                    "service_manager: Service '{}' crashed with {reason}, retrying in {:.3} secs (fails {} times){}",
                     config.name,
                     config.retry_delay.as_secs_f32(),
-                    crash_detail.crash_count()
+                    crash_detail.crash_count(),
+                    txt
                 );
 
                 let retry_timer =
@@ -326,13 +343,22 @@ fn manager_thread() {
             handle: Arc<B<dyn IProcessHandle>>,
             exited_notifier: Arc<EventFd>,
             action_after_stopped: ActionAfterStopped,
+            starting_since: Instant,
+            started_since: Option<Instant>,
         ) -> ServiceStateFull {
             let stop_requested_at = Instant::now();
             println!(
-                "service_manager: Stopping '{}' (Phase 1, graceful signal {} and SIGKILL after {:.2} secs)",
+                "service_manager: Stopping '{}' (Phase 1, graceful signal {} and SIGKILL after {:.2} secs). Service been running for {:.2} secs{}",
                 config.name,
                 config.graceful_signal,
-                config.graceful_delay.as_secs_f32()
+                config.graceful_delay.as_secs_f32(),
+                starting_since.elapsed().as_secs_f32(),
+                started_since
+                    .map(|x| format!(
+                        " and {:.2} secs starting",
+                        (x.elapsed() - starting_since.elapsed()).as_secs_f32()
+                    ))
+                    .unwrap_or(String::new())
             );
 
             let kill_timer =
@@ -371,6 +397,8 @@ fn manager_thread() {
                 exited_notifier,
                 action_after_stopped,
                 stop_requested_at,
+                starting_since,
+                started_since,
             }
         }
 
@@ -396,6 +424,7 @@ fn manager_thread() {
                                         notifier,
                                         exited_notifier,
                                         start_timed_out,
+                                        starting_since,
                                     } => {
                                         // Don't care about ready notifier anymore and start timeout
                                         retry_eintr(|| epoll.delete(notifier.as_fd()))
@@ -411,6 +440,8 @@ fn manager_thread() {
                                             handle,
                                             exited_notifier,
                                             ActionAfterStopped::Nothing,
+                                            starting_since,
+                                            None,
                                         ))
                                     }
                                     ServiceStateFull::Started {
@@ -419,6 +450,8 @@ fn manager_thread() {
                                         sandbox,
                                         handle,
                                         exited_notifier,
+                                        starting_since,
+                                        started_since,
                                     } => Ok(do_stopping(
                                         config,
                                         &epoll,
@@ -428,6 +461,8 @@ fn manager_thread() {
                                         handle,
                                         exited_notifier,
                                         ActionAfterStopped::Nothing,
+                                        starting_since,
+                                        Some(started_since),
                                     )),
                                     ServiceStateFull::WaitingToRestart {
                                         config,
@@ -453,6 +488,8 @@ fn manager_thread() {
                                         kill_timer,
                                         exited_notifier,
                                         stop_requested_at,
+                                        started_since,
+                                        starting_since,
                                     } => Ok(ServiceStateFull::Stopping {
                                         config,
                                         crash_detail,
@@ -462,6 +499,8 @@ fn manager_thread() {
                                         exited_notifier,
                                         action_after_stopped: ActionAfterStopped::Nothing,
                                         stop_requested_at,
+                                        started_since,
+                                        starting_since,
                                     }),
                                     this @ (ServiceStateFull::Stopping {
                                         action_after_stopped: ActionAfterStopped::Nothing,
@@ -536,6 +575,8 @@ fn manager_thread() {
                                     kill_timer,
                                     exited_notifier,
                                     stop_requested_at,
+                                    started_since,
+                                    starting_since,
                                 } => Ok(ServiceStateFull::Stopping {
                                     config,
                                     crash_detail,
@@ -545,6 +586,8 @@ fn manager_thread() {
                                     exited_notifier,
                                     action_after_stopped: ActionAfterStopped::Start,
                                     stop_requested_at,
+                                    started_since,
+                                    starting_since,
                                 }),
                                 this @ (ServiceStateFull::Stopping {
                                     action_after_stopped: ActionAfterStopped::Start,
@@ -607,14 +650,16 @@ fn manager_thread() {
                         notifier,
                         exited_notifier,
                         start_timed_out,
+                        starting_since,
                     } = mem::replace(&mut state.0, ServiceStateFull::Deleted)
                     else {
                         unreachable!("service should be just starting")
                     };
                     println!(
-                        "service_manager: Service '{}' took too long to start >= {:.2} secs",
+                        "service_manager: Service '{}' took too long to start >= {:.2} secs (starting since {:.2} secs)",
                         config.name,
-                        config.start_timeout.as_secs_f32()
+                        config.start_timeout.as_secs_f32(),
+                        starting_since.elapsed().as_secs_f32()
                     );
 
                     // Don't need to read the notifier, reading it would mean
@@ -636,6 +681,8 @@ fn manager_thread() {
                         handle,
                         exited_notifier,
                         ActionAfterStopped::Restart,
+                        starting_since,
+                        None,
                     );
                     state.1.call_all(());
                 }
@@ -675,12 +722,17 @@ fn manager_thread() {
                         notifier,
                         exited_notifier,
                         start_timed_out,
+                        starting_since,
                     } = mem::replace(&mut state.0, ServiceStateFull::Deleted)
                     else {
                         unreachable!("Service has to be 'starting'")
                     };
 
-                    println!("service_manager: Service '{}' is started", config.name);
+                    println!(
+                        "service_manager: Service '{}' is started after {:.2} secs",
+                        config.name,
+                        starting_since.elapsed().as_secs_f32()
+                    );
 
                     retry_eintr(|| epoll.delete(notifier.as_fd()))
                         .expect("Cannot remove started eventfd");
@@ -698,6 +750,8 @@ fn manager_thread() {
                         sandbox,
                         handle,
                         exited_notifier,
+                        started_since: Instant::now(),
+                        starting_since,
                     };
                     state.1.call_all(());
                 }
@@ -730,6 +784,7 @@ fn manager_thread() {
                             notifier,
                             exited_notifier,
                             start_timed_out,
+                            starting_since,
                         } => {
                             // Service crashed
                             retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
@@ -745,7 +800,16 @@ fn manager_thread() {
                                 .0
                                 .expect("Service should already exited");
 
-                            do_restarting(sandbox, &epoll, service, crash_detail, reason, config)
+                            do_restarting(
+                                sandbox,
+                                &epoll,
+                                service,
+                                crash_detail,
+                                reason,
+                                config,
+                                Some(starting_since),
+                                None,
+                            )
                         }
                         ServiceStateFull::Started {
                             config,
@@ -753,6 +817,8 @@ fn manager_thread() {
                             sandbox,
                             handle,
                             exited_notifier,
+                            started_since,
+                            starting_since,
                         } => {
                             // Service crashed
                             retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
@@ -764,7 +830,16 @@ fn manager_thread() {
                                 .0
                                 .expect("Service should already exited");
 
-                            do_restarting(sandbox, &epoll, service, crash_detail, reason, config)
+                            do_restarting(
+                                sandbox,
+                                &epoll,
+                                service,
+                                crash_detail,
+                                reason,
+                                config,
+                                Some(starting_since),
+                                Some(started_since),
+                            )
                         }
                         ServiceStateFull::Stopping {
                             config,
@@ -775,6 +850,8 @@ fn manager_thread() {
                             kill_timer,
                             action_after_stopped,
                             stop_requested_at,
+                            starting_since,
+                            started_since,
                         } => {
                             // Service stopped either by kill_timer expiration or exited
                             retry_eintr(|| epoll.delete(exited_notifier.as_fd()))
@@ -795,9 +872,21 @@ fn manager_thread() {
                                 .flatten()
                                 .expect("Cannot kill all processes in service on crash/exit");
 
+                            let txt = match started_since {
+                                None => format!(
+                                    " and service is running for {:.2}",
+                                    starting_since.elapsed().as_secs_f32()
+                                ),
+                                Some(started_since) => format!(
+                                    " and service is running for {:.2} and spent {:.2} secs in startup",
+                                    starting_since.elapsed().as_secs_f32(),
+                                    (starting_since.elapsed() - started_since.elapsed())
+                                        .as_secs_f32()
+                                ),
+                            };
                             if matches!(reason, ExitReason::Exit(0)) {
                                 println!(
-                                    "service_manager: Service '{}' stopped with {reason} in {:.2} secs",
+                                    "service_manager: Service '{}' stopped with {reason} in {:.2} secs{txt}",
                                     config.name,
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );
@@ -814,6 +903,8 @@ fn manager_thread() {
                                         crash_detail,
                                         reason,
                                         config,
+                                        Some(starting_since),
+                                        started_since,
                                     ),
                                     ActionAfterStopped::Start => {
                                         do_starting(rt, &epoll, &service, crash_detail, config)
@@ -821,7 +912,7 @@ fn manager_thread() {
                                 }
                             } else {
                                 println!(
-                                    "service_manager: Service '{}' stopped with {reason} (did crashed during stopping) in {:.2} secs",
+                                    "service_manager: Service '{}' stopped with {reason} (did crashed during stopping) in {:.2} secs{txt}",
                                     config.name,
                                     stop_requested_at.elapsed().as_secs_f32()
                                 );
@@ -839,6 +930,8 @@ fn manager_thread() {
                                         crash_detail,
                                         reason,
                                         config,
+                                        Some(starting_since),
+                                        started_since,
                                     ),
                                     ActionAfterStopped::Start => {
                                         do_starting(rt, &epoll, &service, crash_detail, config)
