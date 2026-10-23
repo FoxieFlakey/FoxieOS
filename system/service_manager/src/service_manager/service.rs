@@ -78,7 +78,7 @@ pub struct Service {
     pub(super) id: u32,
     // .0 is the state itself, and listeners for changes in service
     // NOTE: The service will be 'locked' do not call into service
-    pub(super) state: Mutex<(ServiceStateFull, Listeners<()>)>,
+    pub(super) state: Mutex<(ServiceStateFull, Listeners<ServiceState>)>,
 }
 
 pub(super) enum ServiceStateFull {
@@ -225,6 +225,31 @@ impl Service {
         svc
     }
 
+    pub fn ensure_started(self: &Arc<Service>) -> Result<(), RequestError> {
+        self.start()?;
+        let (sender, receiver) = oneshot::channel();
+        let mut state = self.state.lock();
+        if let ServiceStateFull::Started { .. } = &state.0 {
+            return Ok(());
+        }
+
+        let mut sender = Some(sender);
+        state.1.register(move |new_state| {
+            if let ServiceState::Started(_) = new_state {
+                if let Some(sender) = sender.take() {
+                    sender.send(()).unwrap();
+                }
+                false
+            } else {
+                true
+            }
+        });
+        drop(state);
+
+        receiver.recv().expect("Cannot be dead");
+        Ok(())
+    }
+
     pub fn start(self: &Arc<Service>) -> Result<(), RequestError> {
         let (sender, receiver) = oneshot::channel();
         service_manager::get_manager().enqueue_req(Request::Start(
@@ -248,7 +273,23 @@ impl Service {
 
     #[expect(unused)]
     pub fn status(&self) -> ServiceState {
-        match &self.state.lock().0 {
+        self.state.lock().0.as_simplified()
+    }
+}
+
+#[expect(unused)]
+pub enum ServiceState {
+    Starting(Pid),
+    Started(Pid),
+    Stopping(Pid),
+    Stopped,
+    WaitingToRestart,
+    Crashed { reason: ExitReason },
+}
+
+impl ServiceStateFull {
+    pub(super) fn as_simplified(&self) -> ServiceState {
+        match self {
             ServiceStateFull::Starting { handle, .. } => {
                 let pid = handle.get_pid().expect("Cannot get pid of process");
                 ServiceState::Starting(pid.0)
@@ -269,14 +310,4 @@ impl Service {
             ServiceStateFull::Deleted => panic!("Service is deleted, cannot be used"),
         }
     }
-}
-
-#[expect(unused)]
-pub enum ServiceState {
-    Starting(Pid),
-    Started(Pid),
-    Stopping(Pid),
-    Stopped,
-    WaitingToRestart,
-    Crashed { reason: ExitReason },
 }

@@ -21,9 +21,12 @@ pub fn run() -> anyhow::Result<()> {
         graceful_signal: Signal::SIGTERM,
         graceful_delay: Duration::from_secs(5),
         start_timeout: Duration::from_secs(20),
-        ready_eventfd_arg: None,
+        ready_eventfd_arg: Some("-s".into()),
     });
 
-    shell_service.start().context("Cannot start shell")?;
+    shell_service
+        .ensure_started()
+        .context("Cannot wait shell startup")?;
+    println!("Shell started!");
     Ok(())
 }

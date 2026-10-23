@@ -5,7 +5,7 @@ use std::{
 
 pub struct Listeners<T> {
     id: u64,
-    registry: HashMap<u64, Box<dyn FnMut(&T) + Send + Sync>>,
+    registry: HashMap<u64, Box<dyn FnMut(&T) -> bool + Send + Sync>>,
     next_callback_id: u64,
 }
 
@@ -33,7 +33,7 @@ impl<T> Listeners<T> {
 
     pub fn register<F>(&mut self, func: F) -> UnregisterToken
     where
-        F: FnMut(&T) + Send + Sync + 'static,
+        F: FnMut(&T) -> bool + Send + Sync + 'static,
     {
         self.next_callback_id += 1;
         assert!(
@@ -61,8 +61,6 @@ impl<T> Listeners<T> {
     }
 
     pub fn call_all(&mut self, val: T) {
-        for callback in self.registry.values_mut() {
-            callback(&val);
-        }
+        self.registry.retain(|_, callback| callback(&val));
     }
 }

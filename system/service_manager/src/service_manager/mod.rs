@@ -569,7 +569,8 @@ fn manager_thread() {
                                         "Next state suppose be stopping with no other next state than nothing or crashed or stopped"
                                     );
                                     state.0 = next_state;
-                                    state.1.call_all(());
+                                    let simplified = state.0.as_simplified();
+                                    state.1.call_all(simplified);
                                     drop(state);
 
                                     fn_once(Ok(()));
@@ -670,7 +671,8 @@ fn manager_thread() {
                                         "Next state suppose be stoping with start_on_stop or starting or started"
                                     );
                                     state.0 = next_state;
-                                    state.1.call_all(());
+                                    let simplified = state.0.as_simplified();
+                                    state.1.call_all(simplified);
                                     drop(state);
 
                                     if is_shutting_down {
@@ -745,7 +747,8 @@ fn manager_thread() {
                         starting_since,
                         None,
                     );
-                    state.1.call_all(());
+                    let simplified = state.0.as_simplified();
+                    state.1.call_all(simplified);
                 }
                 TYPE_SERVICE_NEED_SIGKILL => {
                     let ServiceStateFull::Stopping {
@@ -814,7 +817,8 @@ fn manager_thread() {
                         started_since: Instant::now(),
                         starting_since,
                     };
-                    state.1.call_all(());
+                    let simplified = state.0.as_simplified();
+                    state.1.call_all(simplified);
                 }
                 TYPE_SERVICE_DO_RESTART => {
                     let ServiceStateFull::WaitingToRestart {
@@ -834,7 +838,8 @@ fn manager_thread() {
 
                     state.0 =
                         do_starting(rt, is_shutting_down, &epoll, &service, crash_detail, config);
-                    state.1.call_all(());
+                    let simplified = state.0.as_simplified();
+                    state.1.call_all(simplified);
                 }
                 TYPE_SERVICE_DEATH => {
                     let new_state = match mem::replace(&mut state.0, ServiceStateFull::Deleted) {
@@ -1033,7 +1038,8 @@ fn manager_thread() {
                     );
 
                     state.0 = new_state;
-                    state.1.call_all(());
+                    let simplified = state.0.as_simplified();
+                    state.1.call_all(simplified);
                 }
                 _ => unreachable!("Unknown kind"),
             }
