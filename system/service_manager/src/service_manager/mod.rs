@@ -129,7 +129,9 @@ fn manager_thread() {
         )
         .expect("Cannot add wake up fd to epoll");
 
-    let mut buf = [EpollEvent::empty(); 100];
+    // NOTE: DO NOT INCREASE THIS LIMIT! There no mechanism to handle
+    // stale events
+    let mut buf = [EpollEvent::empty(); 1];
     loop {
         let count = match epoll.wait(&mut buf, PollTimeout::NONE) {
             Ok(x) => x,
@@ -329,6 +331,8 @@ fn manager_thread() {
         for event in &buf[0..count] {
             let kind = event.data() & !u64::from(u32::MAX);
             if kind == TYPE_WAKEUP_FD {
+                manager.wake_up.read().expect("Cannot read wakeup");
+
                 // Is waken up to handle requests
                 for req in manager_lock.reqs.drain(..) {
                     match req {

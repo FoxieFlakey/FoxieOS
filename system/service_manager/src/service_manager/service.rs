@@ -228,7 +228,7 @@ impl Service {
             }
             ServiceStateFull::Started { handle, .. } => {
                 let pid = handle.get_pid().expect("Cannot get pid of process");
-                ServiceState::Starting(pid.0)
+                ServiceState::Started(pid.0)
             }
             ServiceStateFull::Stopping { handle, .. } => {
                 let pid = handle.get_pid().expect("Cannot get pid of process");
@@ -247,6 +247,7 @@ impl Service {
 #[expect(unused)]
 pub enum ServiceState {
     Starting(Pid),
+    Started(Pid),
     Stopping(Pid),
     Stopped,
     WaitingToRestart,
