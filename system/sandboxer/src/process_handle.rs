@@ -14,7 +14,7 @@ use foxie_base::{
 };
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 use libbinder_basic::packetable::Serde;
 use nix::unistd::Pid;
@@ -49,7 +49,7 @@ impl ObjectTrait for ProcessHandle {
 }
 
 impl IObject for ProcessHandle {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iobject::ID => Ok(true),
             iprocesshandle::ID => Ok(true),
@@ -59,18 +59,23 @@ impl IObject for ProcessHandle {
 }
 
 impl IProcessHandle for ProcessHandle {
-    fn get_pid(&self) -> anyhow::Result<foxie_base::common::SerdePid> {
+    fn get_pid(&self) -> Result<foxie_base::common::SerdePid, TransactionError> {
         Ok(SerdePid(self.pid))
     }
 
-    fn get_exit_reason(&self) -> anyhow::Result<anyhow::Result<Serde<Option<ExitReason>>>> {
+    fn get_exit_reason(
+        &self,
+    ) -> Result<anyhow::Result<Serde<Option<ExitReason>>>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }
         Ok(Ok(Serde(self.death_reason.lock().clone())))
     }
 
-    fn send_signal(&self, signal: SerdeSignal) -> anyhow::Result<anyhow::Result<Serde<()>>> {
+    fn send_signal(
+        &self,
+        signal: SerdeSignal,
+    ) -> Result<anyhow::Result<Serde<()>>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }
@@ -82,7 +87,10 @@ impl IProcessHandle for ProcessHandle {
             .map(|()| Serde(())))
     }
 
-    fn on_death(&self, callback: Arc<B<dyn IFnOnce>>) -> anyhow::Result<anyhow::Result<()>> {
+    fn on_death(
+        &self,
+        callback: Arc<B<dyn IFnOnce>>,
+    ) -> Result<anyhow::Result<()>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }

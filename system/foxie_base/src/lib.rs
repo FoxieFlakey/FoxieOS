@@ -5,7 +5,7 @@ use std::{
     sync::OnceLock,
 };
 
-use libbinder::object::{B, ObjectTrait};
+use libbinder::object::{B, ObjectTrait, TransactionError};
 use libbinder_basic::binder_ipc_object;
 use log::Log;
 
@@ -22,7 +22,7 @@ pub static MAIN_BINDER_PATH: &str = "/dev/binder";
 
 #[binder_ipc_object(root = true, interface_id = "foxie.IObject")]
 pub trait IObject: ObjectTrait {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool>;
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError>;
 }
 
 // Pretty basic, token interface. it doesnt do anything. But it will be
@@ -31,7 +31,7 @@ pub trait IObject: ObjectTrait {
 pub trait IToken: IObject {
     // This does nothing, mainly because currently still
     // have not tested macro for no methods
-    fn stub(&self) -> anyhow::Result<()>;
+    fn stub(&self) -> Result<(), TransactionError>;
 }
 
 pub fn init_log<T>(name: T)

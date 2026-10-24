@@ -16,7 +16,7 @@ use foxie_base::{
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 use libbinder_basic::packetable::Serde;
 use log::info;
@@ -95,7 +95,7 @@ impl ServiceRegistry {
 }
 
 impl IObject for ServiceRegistry {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iserviceregistry::ID | iobject::ID => Ok(true),
             _ => Ok(false),
@@ -108,7 +108,7 @@ impl IServiceRegistry for ServiceRegistry {
         &self,
         name: &str,
         service: Arc<B<dyn IService>>,
-    ) -> anyhow::Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>> {
+    ) -> Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>, TransactionError> {
         let mut state = self.state.write();
         if state.is_shutting_down {
             return Ok(Err(Serde(RegisterError::PermissionDenied)));

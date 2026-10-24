@@ -2,7 +2,7 @@ use std::sync::{Arc, oneshot};
 
 use anyhow::Context;
 use libbinder::{
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
     proxy::Proxy,
 };
 use libbinder_basic::{TryFromProxy, binder_ipc_object, packetable::Serde};
@@ -44,7 +44,7 @@ pub trait IServiceRegistry: IObject {
         &self,
         name: &str,
         service: Arc<B<dyn IService>>,
-    ) -> anyhow::Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>>;
+    ) -> Result<Result<Arc<B<dyn IToken>>, Serde<RegisterError>>, TransactionError>;
     fn get_service(&self, name: &str) -> anyhow::Result<Option<Arc<B<dyn IService>>>>;
     fn wait_service(
         &self,
@@ -103,7 +103,7 @@ pub enum StopError {
 
 #[binder_ipc_object(interface_id = "foxie.IService")]
 pub trait IService: IObject {
-    fn stop(&self) -> anyhow::Result<anyhow::Result<()>>;
+    fn stop(&self) -> Result<anyhow::Result<()>, TransactionError>;
 }
 
 #[derive(Serialize, Deserialize, Debug, thiserror::Error)]
@@ -115,5 +115,5 @@ pub enum ShutdownError {
 #[binder_ipc_object(interface_id = "foxie.IServiceManagerCtl")]
 pub trait IServiceManagerCtl: IObject {
     fn request_shutdown(&self) -> anyhow::Result<Result<(), Serde<ShutdownError>>>;
-    fn ping(&self) -> anyhow::Result<Serde<String>>;
+    fn ping(&self) -> Result<Serde<String>, TransactionError>;
 }

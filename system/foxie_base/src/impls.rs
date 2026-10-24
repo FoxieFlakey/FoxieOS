@@ -8,7 +8,7 @@ use std::{
 
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 
 use crate::{IObject, IToken, iobject, itoken};
@@ -81,7 +81,7 @@ impl ObjectTrait for Token {
 }
 
 impl IObject for Token {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iobject::ID | itoken::ID => Ok(true),
             _ => Ok(false),
@@ -90,7 +90,7 @@ impl IObject for Token {
 }
 
 impl IToken for Token {
-    fn stub(&self) -> anyhow::Result<()> {
+    fn stub(&self) -> Result<(), TransactionError> {
         Ok(())
     }
 }

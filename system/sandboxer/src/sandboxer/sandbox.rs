@@ -18,7 +18,7 @@ use foxie_base::{
     uids,
     util::retry_eintr,
 };
-use libbinder::object::{B, ObjectTrait};
+use libbinder::object::{B, ObjectTrait, TransactionError};
 use libbinder_basic::packetable::Serde;
 use log::{debug, warn};
 use nix::unistd::{Pid, Uid};
@@ -221,7 +221,7 @@ impl ObjectTrait for Sandbox {
 }
 
 impl IObject for Sandbox {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iobject::ID => Ok(true),
             isandbox::ID => Ok(true),
@@ -231,7 +231,7 @@ impl IObject for Sandbox {
 }
 
 impl ISandbox for Sandbox {
-    fn kill_all(&self) -> anyhow::Result<anyhow::Result<Serde<()>>> {
+    fn kill_all(&self) -> Result<anyhow::Result<Serde<()>>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }
@@ -241,7 +241,7 @@ impl ISandbox for Sandbox {
     fn spawn(
         &self,
         spawn_args: SpawnArgs,
-    ) -> anyhow::Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>> {
+    ) -> Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }

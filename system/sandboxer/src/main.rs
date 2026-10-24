@@ -16,7 +16,7 @@ use foxie_base::{
 };
 use libbinder::{
     ContextManagerInfo, Runtime,
-    object::{B, ObjectFlags, ObjectTrait},
+    object::{B, ObjectFlags, ObjectTrait, TransactionError},
 };
 use libbinder_basic::{TryFromProxy, packetable::Serde};
 use log::info;
@@ -135,7 +135,7 @@ impl ObjectTrait for Ctl {
 }
 
 impl IObject for Ctl {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iobject::ID => Ok(true),
             isandboxservice::ID => Ok(true),
@@ -146,7 +146,7 @@ impl IObject for Ctl {
 }
 
 impl IService for Ctl {
-    fn stop(&self) -> anyhow::Result<anyhow::Result<()>> {
+    fn stop(&self) -> Result<anyhow::Result<()>, TransactionError> {
         *CAN_SHUTDOWN.lock() = true;
         SHUTDOWN_CHANGED.notify_all();
         Ok(Ok(()))
@@ -157,7 +157,7 @@ impl ISandboxService for Ctl {
     fn create_sandbox(
         &self,
         config: Serde<foxie_base::sandboxer::Config>,
-    ) -> anyhow::Result<anyhow::Result<Arc<B<dyn ISandbox>>>> {
+    ) -> Result<anyhow::Result<Arc<B<dyn ISandbox>>>, TransactionError> {
         if !uids::can_access_sandboxer(self.get_runtime().get_caller_identity().sender_euid) {
             return Ok(Err(anyhow!("Caller not allowed to access sandboxer")));
         }

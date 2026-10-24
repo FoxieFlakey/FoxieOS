@@ -6,7 +6,7 @@ use foxie_base::{
 };
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 use libbinder_basic::packetable::Serde;
 use log::info;
@@ -56,7 +56,7 @@ impl ObjectTrait for Init {
 }
 
 impl IObject for Init {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> anyhow::Result<bool, TransactionError> {
         match name {
             iobject::ID => Ok(true),
             iservicemanagerctl::ID => Ok(true),
@@ -66,7 +66,7 @@ impl IObject for Init {
 }
 
 impl IServiceManagerCtl for Init {
-    fn ping(&self) -> anyhow::Result<Serde<String>> {
+    fn ping(&self) -> Result<Serde<String>, TransactionError> {
         Ok(Serde("Hiiii from init >w> i am alive!".to_string()))
     }
 

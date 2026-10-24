@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt::Display, os::fd::OwnedFd, sync::Arc};
 
 use anyhow::Context;
-use libbinder::object::{B, ObjectTrait};
+use libbinder::object::{B, ObjectTrait, TransactionError};
 use libbinder_basic::{
     binder_ipc_object,
     packetable::{Packetable, Serde},
@@ -76,11 +76,11 @@ impl<'a> Packetable<'a> for SpawnArgs<'a> {
 
 #[binder_ipc_object(interface_id = "foxie.ISandbox")]
 pub trait ISandbox: IObject {
-    fn kill_all(&self) -> anyhow::Result<anyhow::Result<Serde<()>>>;
+    fn kill_all(&self) -> Result<anyhow::Result<Serde<()>>, TransactionError>;
     fn spawn(
         &self,
         spawn_args: SpawnArgs,
-    ) -> anyhow::Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>>;
+    ) -> Result<anyhow::Result<Arc<B<dyn IProcessHandle>>>, TransactionError>;
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone)]
@@ -100,10 +100,18 @@ impl Display for ExitReason {
 
 #[binder_ipc_object(interface_id = "foxie.ISandboxProcess")]
 pub trait IProcessHandle: IObject {
-    fn get_pid(&self) -> anyhow::Result<SerdePid>;
-    fn get_exit_reason(&self) -> anyhow::Result<anyhow::Result<Serde<Option<ExitReason>>>>;
-    fn send_signal(&self, signal: SerdeSignal) -> anyhow::Result<anyhow::Result<Serde<()>>>;
-    fn on_death(&self, callback: Arc<B<dyn IFnOnce>>) -> anyhow::Result<anyhow::Result<()>>;
+    fn get_pid(&self) -> Result<SerdePid, TransactionError>;
+    fn get_exit_reason(
+        &self,
+    ) -> Result<anyhow::Result<Serde<Option<ExitReason>>>, TransactionError>;
+    fn send_signal(
+        &self,
+        signal: SerdeSignal,
+    ) -> Result<anyhow::Result<Serde<()>>, TransactionError>;
+    fn on_death(
+        &self,
+        callback: Arc<B<dyn IFnOnce>>,
+    ) -> Result<anyhow::Result<()>, TransactionError>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,7 +127,7 @@ pub trait ISandboxService: IService {
     fn create_sandbox(
         &self,
         config: Serde<Config>,
-    ) -> anyhow::Result<anyhow::Result<Arc<B<dyn ISandbox>>>>;
+    ) -> Result<anyhow::Result<Arc<B<dyn ISandbox>>>, TransactionError>;
 }
 
 pub const SERVICE_ID: &str = "foxieos.Sandboxer";

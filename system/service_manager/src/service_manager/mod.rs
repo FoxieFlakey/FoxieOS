@@ -207,7 +207,7 @@ fn manager_thread() {
                     uid: config.uid.as_raw(),
                     profile: config.sandbox_profile,
                 }))
-                .flatten()
+                .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot create sandbox");
             let handle = sandbox
                 .spawn(SpawnArgs {
@@ -217,7 +217,7 @@ fn manager_thread() {
                     tty: config.tty.as_ref().map(|x| x.as_str().into()),
                     fd_args,
                 })
-                .flatten()
+                .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot start service");
             let exit_fd = Arc::new(
                 retry_eintr(|| EventFd::new()).expect("Cannot create event fd for service exit"),
@@ -229,7 +229,7 @@ fn manager_thread() {
                     retry_eintr(|| cloned.write(1))
                         .expect("Cannot write to eventfd that process is dead");
                 }))
-                .flatten()
+                .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot register death listener for service's process");
 
             let start_timed_out =
@@ -302,7 +302,7 @@ fn manager_thread() {
             // Kill all processes running
             sandbox
                 .kill_all()
-                .flatten()
+                .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot kill all processes in service on crash");
             crash_detail.service_just_crashed();
 
@@ -427,7 +427,7 @@ fn manager_thread() {
             // Send graceful signal to process
             handle
                 .send_signal(SerdeSignal(config.graceful_signal))
-                .flatten()
+                .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot send graceful signal to main process");
 
             ServiceStateFull::Stopping {
@@ -772,7 +772,7 @@ fn manager_thread() {
                     retry_eintr(|| kill_timer.unset()).expect("Cannot disarm kill timer");
                     sandbox
                         .kill_all()
-                        .flatten()
+                        .expect("Cannot send transaction to sandboxer")
                         .expect("Cannot send SIGKILL to all service's processes");
 
                     // Later the state change will happen by the TYPE_SERVICE_DEATH
@@ -863,7 +863,7 @@ fn manager_thread() {
                                 .expect("Cannot remove timerfd for start timeout");
                             let reason = handle
                                 .get_exit_reason()
-                                .flatten()
+                                .expect("Cannot send transaction to sandboxer")
                                 .expect("Cannot get service exit reason")
                                 .0
                                 .expect("Service should already exited");
@@ -894,7 +894,7 @@ fn manager_thread() {
                                 .expect("Cannot remove eventfd for exit notifier");
                             let reason = handle
                                 .get_exit_reason()
-                                .flatten()
+                                .expect("Cannot send transaction to sandboxer")
                                 .expect("Cannot get service exit reason")
                                 .0
                                 .expect("Service should already exited");
@@ -931,7 +931,7 @@ fn manager_thread() {
 
                             let reason = handle
                                 .get_exit_reason()
-                                .flatten()
+                                .expect("Cannot send transaction to sandboxer")
                                 .expect("Cannot get service exit reason")
                                 .0
                                 .expect("Service should already exited");
@@ -939,7 +939,7 @@ fn manager_thread() {
                             // Kill all processes running
                             sandbox
                                 .kill_all()
-                                .flatten()
+                                .expect("Cannot send transaction to sandboxer")
                                 .expect("Cannot kill all processes in service on crash/exit");
 
                             let txt = match started_since {

@@ -6,7 +6,7 @@ use std::{
 use anyhow::anyhow;
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 use libbinder_basic::binder_ipc_object;
 use nix::errno::Errno;
@@ -18,7 +18,7 @@ pub mod listeners;
 
 #[binder_ipc_object(interface_id = "foxieos.IFnOnce")]
 pub trait IFnOnce: IObject {
-    fn call(&self) -> anyhow::Result<anyhow::Result<()>>;
+    fn call(&self) -> Result<anyhow::Result<()>, TransactionError>;
 }
 
 pub struct FnOnceObject(
@@ -46,7 +46,7 @@ impl ObjectTrait for FnOnceObject {
 }
 
 impl IObject for FnOnceObject {
-    fn has_interface(&self, name: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, name: &str) -> Result<bool, TransactionError> {
         match name {
             iobject::ID => Ok(true),
             ifnonce::ID => Ok(true),
@@ -56,7 +56,7 @@ impl IObject for FnOnceObject {
 }
 
 impl IFnOnce for FnOnceObject {
-    fn call(&self) -> anyhow::Result<anyhow::Result<()>> {
+    fn call(&self) -> Result<anyhow::Result<()>, TransactionError> {
         match self.0.lock().take() {
             Some(x) => Ok(Ok((x)())),
             None => Ok(Err(anyhow!("This function already called"))),
