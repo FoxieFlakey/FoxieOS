@@ -248,7 +248,7 @@ fn do_shutdown() -> anyhow::Result<Infallible> {
 
     sync();
     sleep(Duration::from_secs(1));
-    Ok(retry_eintr(|| reboot(RebootMode::RB_POWER_OFF)).context("Cannot perform shutdown")?)
+    retry_eintr(|| reboot(RebootMode::RB_POWER_OFF)).context("Cannot perform shutdown")?
 }
 
 static SHELLS: LazyLock<Mutex<Box<[ShellState]>>> =
