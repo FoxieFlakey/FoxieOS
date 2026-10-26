@@ -3,9 +3,12 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use anyhow::Context;
 use clap::Parser;
 use foxie_base::util::retry_eintr;
-use log::info;
 use nix::sys::eventfd::EventFd;
 use parking_lot::{Condvar, Mutex};
+
+use crate::graphics_server::GraphicsServer;
+
+mod graphics_server;
 
 static CAN_SHUTDOWN: Mutex<bool> = Mutex::new(false);
 static SHUTDOWN_CHANGED: Condvar = Condvar::new();
@@ -27,7 +30,7 @@ fn main() -> anyhow::Result<()> {
                 .context("--ready-event-fd is not valid fd")?,
         ))
     };
-    info!("Hello, world!");
+    let _server = GraphicsServer::new().context("Cannot initialze graphics server")?;
 
     retry_eintr(|| ready_event_fd.write(1)).context("Cannot send ready notification")?;
 
