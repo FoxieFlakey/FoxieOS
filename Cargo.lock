@@ -933,16 +933,13 @@ dependencies = [
  "anyhow",
  "caps",
  "clap",
- "command-fds",
  "enumflags2",
  "foxie_base",
  "libbinder",
  "libbinder-basic",
  "log",
  "nix",
- "openat",
  "parking_lot 0.12.5",
- "pidfd-util",
  "thiserror",
 ]
 
