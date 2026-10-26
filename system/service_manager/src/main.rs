@@ -37,6 +37,10 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     foxie_base::init_log("service_manager");
+    foxie_base::rlimits::SERVICE_MANAGER
+        .apply()
+        .context("Cannot apply service_manager's rlimit")?;
+
     let cli = Cli::parse();
     // Assume caler make it correct
     let ready_event_fd = unsafe {

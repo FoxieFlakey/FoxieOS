@@ -97,6 +97,8 @@ impl Sandbox {
             helper.arg("--arg0");
             helper.arg(&**arg0);
         }
+        helper.arg("--rlimits");
+        helper.arg(serde_json::to_string(&args.rlimits).expect("Cannot serialize RLimits"));
         helper.arg("--");
 
         for fd_arg in &args.fd_args {

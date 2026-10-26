@@ -216,6 +216,7 @@ fn manager_thread() {
                     arg0: config.arg0.as_ref().map(|x| x.as_str().into()),
                     tty: config.tty.as_ref().map(|x| x.as_str().into()),
                     fd_args,
+                    rlimits: config.rlimits,
                 })
                 .expect("Cannot send transaction to sandboxer")
                 .expect("Cannot start service");

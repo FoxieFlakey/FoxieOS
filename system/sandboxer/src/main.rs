@@ -81,6 +81,10 @@ fn main() -> anyhow::Result<()> {
     root_dev::discover_root().context("Cannot find root device")?;
     sandboxer::init().context("Initializing sandboxer")?;
 
+    foxie_base::rlimits::SANDBOXER
+        .apply()
+        .context("Cannot apply sandboxer rlimit")?;
+
     // Service manager is ready, lets do register sandboxer
     service_manager_ready_event_fd
         .read()

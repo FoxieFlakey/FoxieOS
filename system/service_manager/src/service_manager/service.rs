@@ -6,6 +6,7 @@ use std::{
 };
 
 use foxie_base::{
+    rlimits::RLimits,
     sandboxer::{ExitReason, IProcessHandle, ISandbox},
     util::listeners::Listeners,
 };
@@ -47,6 +48,9 @@ pub struct Config {
     // two new arg added to argv prepended, so [0] is this
     // and [1] is the fd where its resided
     pub ready_eventfd_arg: Option<String>,
+
+    // rlimits for service
+    pub rlimits: RLimits,
 }
 
 impl Config {

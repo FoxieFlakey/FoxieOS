@@ -19,6 +19,7 @@ use log::info;
 use nix::{
     errno::Errno,
     fcntl::AT_FDCWD,
+    libc,
     mount::{MsFlags, mount},
     sys::{
         eventfd::EventFd,
@@ -38,6 +39,22 @@ fn main() -> anyhow::Result<Infallible> {
     if Pid::this().as_raw() != 1 {
         bail!("Must run as PID 1");
     }
+
+    // Make init to be niceness -20, eventually downstream will auto clamps
+    // thru foxie_base::RLimit::apply
+    loop {
+        let ret = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, -20) };
+        if ret == -1 {
+            if Errno::last() == Errno::EINTR {
+                continue;
+            }
+
+            return Err(Errno::last()).context("Cannot set init priority to be maximized");
+        } else if ret == 0 {
+            break;
+        }
+    }
+
     foxie_base::init_log("init");
 
     prep_fs().context("Cannot prepare fs")?;
@@ -82,12 +99,6 @@ fn main() -> anyhow::Result<Infallible> {
         )
     };
 
-    thread::spawn(move || {
-        retry_eintr(|| shutdown_req.read()).expect("Cannot read shutdown req: {e}");
-        INTENDING_TO_SHUTDOWN.store(true, Ordering::Relaxed);
-        retry_eintr(|| shutdown_acked.write(1)).expect("Cannot write shutdown ack: {e}");
-    });
-
     // We will wait outselves later, for why Child is dropped
     let server_pid = i32::try_from(
         Command::new("/system/bin/service_manager")
@@ -118,6 +129,16 @@ fn main() -> anyhow::Result<Infallible> {
             .id(),
     )
     .context("Service manager PID is too big")?;
+
+    foxie_base::rlimits::INIT
+        .apply()
+        .context("Cannot apply init rlimit")?;
+
+    thread::spawn(move || {
+        retry_eintr(|| shutdown_req.read()).expect("Cannot read shutdown req: {e}");
+        INTENDING_TO_SHUTDOWN.store(true, Ordering::Relaxed);
+        retry_eintr(|| shutdown_acked.write(1)).expect("Cannot write shutdown ack: {e}");
+    });
 
     thread::spawn(shell_spawner);
 

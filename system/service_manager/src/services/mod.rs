@@ -23,6 +23,7 @@ pub fn run() -> anyhow::Result<()> {
         graceful_delay: Duration::from_secs(5),
         start_timeout: Duration::from_secs(20),
         ready_eventfd_arg: None,
+        rlimits: foxie_base::rlimits::SHELL,
     });
 
     let graphics_server_ervice = Service::new(service_manager::service::Config {
@@ -40,6 +41,7 @@ pub fn run() -> anyhow::Result<()> {
         graceful_delay: Duration::from_secs(5),
         start_timeout: Duration::from_secs(2),
         ready_eventfd_arg: Some("--ready-event-fd".into()),
+        rlimits: foxie_base::rlimits::GRAPHICS_SERVER,
     });
 
     graphics_server_ervice

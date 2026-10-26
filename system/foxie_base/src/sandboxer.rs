@@ -12,6 +12,7 @@ use crate::{
     IObject,
     common::{SerdePid, SerdeSignal},
     iobject,
+    rlimits::RLimits,
     service_registry::{IService, iservice},
     util::IFnOnce,
 };
@@ -29,6 +30,9 @@ pub struct SpawnArgs<'a> {
     pub tty: Option<Cow<'a, str>>,
     // These will be prepended first to argv
     pub fd_args: Vec<(String, OwnedFd)>,
+
+    // Rlimits for child
+    pub rlimits: RLimits,
 }
 
 impl<'a> Packetable<'a> for SpawnArgs<'a> {
@@ -37,6 +41,8 @@ impl<'a> Packetable<'a> for SpawnArgs<'a> {
         serde::Serialize::serialize(&self.argv, &mut writer).context("Cannot serialize 'argv'")?;
         serde::Serialize::serialize(&self.arg0, &mut writer).context("Cannot serialize 'arg0'")?;
         serde::Serialize::serialize(&self.tty, &mut writer).context("Cannot serialize 'tty'")?;
+        serde::Serialize::serialize(&self.rlimits, &mut writer)
+            .context("Cannot serialize 'rlimits'")?;
         Packetable::serialize(&self.fd_args.len(), &mut writer)
             .context("Cannot serialize fd_args len")?;
 
@@ -55,6 +61,8 @@ impl<'a> Packetable<'a> for SpawnArgs<'a> {
             serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'arg0'")?;
         let tty =
             serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'tty'")?;
+        let rlimits =
+            serde::Deserialize::deserialize(&mut reader).context("Cannot deserialize 'rlimits'")?;
 
         let len = Packetable::deserialize(&mut reader).context("Cannot read length of fd_args")?;
         let mut fd_args = Vec::with_capacity(len);
@@ -70,6 +78,7 @@ impl<'a> Packetable<'a> for SpawnArgs<'a> {
             arg0,
             tty,
             fd_args,
+            rlimits,
         })
     }
 }

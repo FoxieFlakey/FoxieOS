@@ -12,6 +12,7 @@ use std::{
 use anyhow::Context;
 use caps::CapSet;
 use clap::Parser;
+use foxie_base::rlimits::RLimits;
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     sched::{CloneFlags, setns},
@@ -38,6 +39,9 @@ pub struct Cli {
     #[arg(long)]
     root_fd: u32,
 
+    #[arg(long)]
+    rlimits: String,
+
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     argv: Vec<String>,
 }
@@ -58,6 +62,9 @@ fn main() -> Result<Infallible, anyhow::Error> {
     }
 
     cmd.args(&cli.argv);
+
+    let rlimits =
+        serde_json::from_str::<RLimits>(&cli.rlimits).context("Cannot parse rlimits argument")?;
 
     prctl::set_no_new_privs().context("Cannot set PR_SET_NO_NEW_PRIVS")?;
     prctl::set_keepcaps(false).context("Cannot set PR_SET_KEEPCAPS to false")?;
@@ -81,6 +88,9 @@ fn main() -> Result<Infallible, anyhow::Error> {
     procs_fd
         .write_all(b"0\n")
         .context("Cannot enter sandboxed cgroup")?;
+
+    // Apply rlimits
+    rlimits.apply().context("Cannot apply rlimits")?;
 
     setns(mnt_namespace.as_fd(), CloneFlags::CLONE_NEWNS).context("Cannot set mount namespace")?;
     let root_fd =

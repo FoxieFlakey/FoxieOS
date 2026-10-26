@@ -10,5 +10,6 @@ libbinder-basic = { version = "0.1.0", path = "../../libs/libbinder/extras/libbi
 log = "0.4.34"
 nix = { version = "0.31.3", features = ["fs"] }
 parking_lot = "0.12.5"
+rlimit = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"

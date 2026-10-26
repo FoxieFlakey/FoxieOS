@@ -13,6 +13,7 @@ use crate::util::retry_eintr;
 
 pub mod common;
 pub mod impls;
+pub mod rlimits;
 pub mod sandboxer;
 pub mod service_registry;
 pub mod uids;
