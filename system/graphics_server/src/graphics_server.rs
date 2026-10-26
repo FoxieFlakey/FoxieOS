@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use log::{info, warn};
-use nice_drm_uwu::primary_gpu::{PrimaryGpu, master_state::MasterGuard};
+use nice_drm_uwu::primary_gpu::{
+    PrimaryGpu,
+    connector::{Connector, State},
+    crtc::Crtc,
+    encoder::Encoder,
+    master_state::MasterGuard,
+};
 use yoke::Yoke;
 
 pub struct GraphicsServer {
@@ -10,6 +16,12 @@ pub struct GraphicsServer {
     gpu: Arc<PrimaryGpu>,
     #[expect(unused)]
     master_lock: Yoke<MasterGuard<'static>, Arc<PrimaryGpu>>,
+    #[expect(unused)]
+    main_crtc: Arc<Crtc>,
+    #[expect(unused)]
+    main_encoder: Arc<Encoder>,
+    #[expect(unused)]
+    main_connector: Connector,
 }
 
 impl GraphicsServer {
@@ -46,12 +58,10 @@ impl GraphicsServer {
         }
 
         info!("Connectors detected:");
-        for (index, connector) in gpu
+        let connectors = gpu
             .get_connectors(true)
-            .context("Cannot retrieve all connectors")?
-            .iter()
-            .enumerate()
-        {
+            .context("Cannot retrieve all connectors")?;
+        for (index, connector) in connectors.iter().enumerate() {
             info!("{index:2}. {connector}");
             match connector.current_encoder() {
                 Some(encoder) => {
@@ -79,6 +89,29 @@ impl GraphicsServer {
             }
         }
 
-        Ok(Self { gpu, master_lock })
+        let (main_connector, main_encoder, main_crtc) = connectors
+            .into_iter()
+            .filter(|x| x.state() == State::Connected)
+            .map(|x| (x.current_encoder().cloned(), x))
+            .flat_map(|(encoder, connector)| encoder.map(|x| (connector, x)))
+            .flat_map(|(conn, enc)| match enc.get_crtc() {
+                Ok(crtc) => crtc.map(|x| (conn, enc, x)),
+                Err(e) => {
+                    warn!("Cannot get CRTC info that attached to encoder {enc} (thats attached to connector {conn}), skipping this config: {e}");
+                    None
+                }
+            })
+            .next()
+            .ok_or(anyhow!("Cannot find active usable connector"))?;
+
+        info!("Found this config ({main_crtc} -> {main_encoder} -> {main_connector}) using it");
+
+        Ok(Self {
+            gpu,
+            master_lock,
+            main_crtc,
+            main_encoder,
+            main_connector,
+        })
     }
 }
