@@ -632,6 +632,7 @@ name = "nice_drm_uwu"
 version = "0.1.0"
 dependencies = [
  "drm",
+ "drm-ffi",
  "nix",
  "procfs",
  "thiserror",

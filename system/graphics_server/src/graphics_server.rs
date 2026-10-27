@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use log::{info, warn};
-use nice_drm_uwu::primary_gpu::{
-    PrimaryGpu,
-    connector::{Connector, State},
-    crtc::Crtc,
-    encoder::Encoder,
-    master_state::MasterGuard,
+use nice_drm_uwu::{
+    gpu::ClientCapability,
+    primary_gpu::{
+        PrimaryGpu,
+        connector::{Connector, State},
+        crtc::Crtc,
+        encoder::Encoder,
+        master_state::MasterGuard,
+    },
 };
 use yoke::Yoke;
 
@@ -37,6 +40,44 @@ impl GraphicsServer {
         let master_lock = Yoke::try_attach_to_cart(gpu.clone(), |x| x.lock_master())
             .context("Cannot acquire master lock on main GPU")?;
 
+        let basic_gpu = gpu.get_basic_gpu();
+        if !basic_gpu
+            .is_dumb_buffer_supported()
+            .context("Cannot query dumb buffer support")?
+        {
+            bail!("GPU lacks required driver support: dumb buffer");
+        }
+
+        if !basic_gpu
+            .is_monotonic_timestamp_supported()
+            .context("Cannot query monotonic timestamp support")?
+        {
+            bail!("GPU lacks required driver support: monotonic timestamp");
+        }
+
+        if !basic_gpu
+            .is_prime_handle_supported()
+            .context("Cannot query prime handle support for import export")?
+        {
+            bail!("GPU lacks required driver support: prime handle");
+        }
+
+        if !basic_gpu
+            .is_timeline_syncobj_supported()
+            .context("Cannot query timeline syncobj support")?
+        {
+            bail!("GPU lacks required driver support: timeline syncobj");
+        }
+
+        basic_gpu
+            .set_client_capability(ClientCapability::Atomic, true)
+            .context("Cant enable atomic modesetting on GPU")?;
+
+        basic_gpu
+            .set_client_capability(ClientCapability::UniversalPlanes, true)
+            .context("Cant enable universal planes on GPU")?;
+
+        info!("Selected GPU is eligible for graphics_server usage");
         info!("CRTCs detected:");
         for (index, crtc) in gpu.get_crtcs().iter().enumerate() {
             match crtc.mode() {
