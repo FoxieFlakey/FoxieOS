@@ -7,3 +7,6 @@
 [submodule "libs/nice_drm_uwu"]
 	path = libs/nice_drm_uwu
 	url = git@github.com:FoxieFlakey/nice_drm_uwu
+[submodule "libs/dma-buf"]
+	path = libs/dma-buf
+	url = git@github.com:FoxieFlakey/dma-buf

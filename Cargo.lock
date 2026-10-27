@@ -252,6 +252,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dma-buf"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "thiserror",
+]
+
+[[package]]
 name = "drm"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
