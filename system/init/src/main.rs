@@ -466,19 +466,6 @@ fn prep_fs() -> anyhow::Result<()> {
         )
     })
     .context("Cannot set owner and group for /dev/dri/card0")?;
-
-    let dma_heap = retry_eintr(|| File::open("/dev/dma_heap/system"))
-        .context("Cannot open /dev/dma_heap/system")?;
-    retry_eintr(|| fchmod(dma_heap.as_fd(), Mode::S_IRUSR | Mode::S_IWUSR))
-        .context("Cannot set mode for /dev/dma_heap/system")?;
-    retry_eintr(|| {
-        fchown(
-            dma_heap.as_fd(),
-            Some(foxie_base::uids::GRAPHICS_SERVER),
-            Some(Gid::from(foxie_base::uids::GRAPHICS_SERVER.as_raw())),
-        )
-    })
-    .context("Cannot set owner and group for /dev/dma_heap/system")?;
     Ok(())
 }
 
