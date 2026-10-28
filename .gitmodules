@@ -13,3 +13,4 @@
 [submodule "libs/drm"]
 	path = libs/drm
 	url = git@github.com:FoxieFlakey/fork-drm-rs
+	branch = fix-clips-ptr
