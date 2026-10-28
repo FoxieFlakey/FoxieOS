@@ -8,8 +8,10 @@ use nice_drm_uwu::{
         PrimaryGpu,
         connector::{Connector, State},
         crtc::Crtc,
+        dumb_buffer::{BufferFormat, BufferModifier},
         encoder::Encoder,
         master_state::MasterGuard,
+        mode::Mode,
     },
 };
 use yoke::Yoke;
@@ -25,6 +27,8 @@ pub struct GraphicsServer {
     main_encoder: Arc<Encoder>,
     #[expect(unused)]
     main_connector: Connector,
+    #[expect(unused)]
+    main_mode: Mode,
 }
 
 impl GraphicsServer {
@@ -130,7 +134,7 @@ impl GraphicsServer {
             }
         }
 
-        let (main_connector, main_encoder, main_crtc) = connectors
+        let (main_connector, main_encoder, main_crtc, main_mode) = connectors
             .into_iter()
             .filter(|x| x.state() == State::Connected)
             .map(|x| (x.current_encoder().cloned(), x))
@@ -142,10 +146,36 @@ impl GraphicsServer {
                     None
                 }
             })
+            .flat_map(|(conn, enc, crtc)| {
+                match crtc.mode() {
+                    Ok(mode) => mode.map(|mode| (conn, enc, crtc, mode)),
+                    Err(e) => {
+                        warn!("Cannot mode of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config: {e}");
+                        None
+                    },
+                }
+            })
             .next()
             .ok_or(anyhow!("Cannot find active usable connector"))?;
 
         info!("Found this config ({main_crtc} -> {main_encoder} -> {main_connector}) using it");
+
+        let buf = gpu
+            .alloc_dumb_buffer(
+                (
+                    main_mode.resolution().0.into(),
+                    main_mode.resolution().1.into(),
+                ),
+                BufferModifier::Linear,
+                BufferFormat::Xrgb8888,
+            )
+            .context("Cannot create dumb buffer for framebuffer")?;
+
+        let framebuffer = buf
+            .create_framebuffer()
+            .context("Cannot create framebuffer out of dumb buffer")?;
+
+        framebuffer.dirty().context("Cannot dirty framebuffer")?;
 
         Ok(Self {
             gpu,
@@ -153,6 +183,7 @@ impl GraphicsServer {
             main_crtc,
             main_encoder,
             main_connector,
+            main_mode,
         })
     }
 }

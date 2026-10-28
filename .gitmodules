@@ -10,3 +10,6 @@
 [submodule "libs/dma-buf"]
 	path = libs/dma-buf
 	url = git@github.com:FoxieFlakey/dma-buf
+[submodule "libs/drm"]
+	path = libs/drm
+	url = git@github.com:FoxieFlakey/fork-drm-rs
