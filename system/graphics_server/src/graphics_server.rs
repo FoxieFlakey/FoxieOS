@@ -12,9 +12,9 @@ use log::{info, warn};
 use nice_drm_uwu::{
     gpu::ClientCapability,
     primary_gpu::{
-        PrimaryGpu,
+        self, PrimaryGpu,
         connector::{Connector, State},
-        crtc::Crtc,
+        crtc::{Crtc, VBlankSequenceFlags, VBlankSequenceTarget},
         dumb_buffer::{BufferFormat, BufferModifier, DumbBuffer, mapping::DumbMapping},
         encoder::Encoder,
         framebuffer::Framebuffer,
@@ -271,6 +271,8 @@ impl GraphicsServer {
     fn run(mut self: Arc<Self>) {
         let shutdown_fd = self.do_shutdown.clone();
         let server = Arc::downgrade(&self);
+        let gpu_fd =
+            nix::unistd::dup(self.gpu.get_basic_gpu().get_fd()).expect("Cannot dup GPU fd");
 
         let mut front_buffer = self
             .alloc_framebuffer()
@@ -300,11 +302,26 @@ impl GraphicsServer {
             .plane_set_src_y(&self.main_plane, 0)
             .plane_set_src_w(&self.main_plane, front_buffer.framebuffer.width())
             .plane_set_src_h(&self.main_plane, front_buffer.framebuffer.height())
-            // And do first pageflip too
-            .pageflip(true)
             .commit()
             .expect("Cannot do atomic modeset");
 
+        self.main_crtc
+            .queue_vblank_sequence(
+                VBlankSequenceTarget::Relative(1),
+                VBlankSequenceFlags::NextOnMiss.into(),
+            )
+            .expect("Cannot subscribe for next vblank");
+
+        let seq_info = self
+            .main_crtc
+            .get_vblank_sequence()
+            .expect("Cannot get vblank sequence");
+        info!("Main CRTC is active? {:?}", seq_info.active);
+        info!("Main CRTC latest sequence is? {:?}", seq_info.sequence);
+        info!(
+            "Main CRTC latest sequence time is? {:?} ago",
+            seq_info.sequence_time.elapsed()
+        );
         drop(self);
 
         let render_timer = TimerFd::new(
@@ -322,10 +339,14 @@ impl GraphicsServer {
         let colors: [u32; _] = [0x682b2a, 0xf9a147, 0x1862ff, 0xfcfd4f, 0xff74b3];
         let mut cur_seq = 0;
 
+        let mut pageflip_in_progress = false;
+        let mut backbuffer_ready = false;
+
         loop {
             let mut polls = [
                 PollFd::new(shutdown_fd.as_fd(), PollFlags::POLLIN),
                 PollFd::new(render_timer.as_fd(), PollFlags::POLLIN),
+                PollFd::new(gpu_fd.as_fd(), PollFlags::POLLIN),
             ];
 
             retry_eintr(|| poll::poll(&mut polls, PollTimeout::NONE)).expect("Cannot poll");
@@ -338,36 +359,79 @@ impl GraphicsServer {
             if !polls[1].revents().unwrap().is_empty() {
                 render_timer.wait().expect("Cannot consume timer event");
 
-                // Do page flip
+                // Update state
+                cur_seq = (cur_seq + 1) % colors.len();
+            }
+
+            if !polls[2].revents().unwrap().is_empty() {
                 self = match server.upgrade() {
                     Some(x) => x,
                     None => continue,
                 };
 
-                mem::swap(&mut front_buffer, &mut back_buffer);
+                for event in self.gpu.read_events().expect("Cannot read DRM events") {
+                    match event {
+                        primary_gpu::Event::VBlankSequence(event) => {
+                            if !Arc::ptr_eq(&event.crtc, &self.main_crtc) {
+                                // Don't know what this VBlank from ignore it
+                                warn!("Unknown crtc in vblank event");
+                                continue;
+                            }
 
-                front_buffer
-                    .framebuffer
-                    .dirty()
-                    .expect("Cannot dirty front buffer");
-                self.gpu
-                    .create_atomic_req()
-                    .plane_attach_framebuffer(&self.main_plane, Some(&front_buffer.framebuffer))
-                    .pageflip(true)
-                    .commit()
-                    .expect("Cannot do page flip");
+                            // Subscribe for next vblank
+                            self.main_crtc
+                                .queue_vblank_sequence(
+                                    VBlankSequenceTarget::Relative(1),
+                                    VBlankSequenceFlags::NextOnMiss.into(),
+                                )
+                                .expect("Cannot subscribe for next vblank after vblank");
 
-                // Then we can render to back buffer
-                let color_to_fill = colors[cur_seq].to_le_bytes();
+                            // Do render in vblank
+                            let color_to_fill = colors[cur_seq].to_le_bytes();
 
-                // SAFETY: This is fine, the CRTC is not currently reading it nor anything
-                // writing/reading to this
-                let mapping = unsafe { back_buffer.mapping.get_mut() };
-                for pixel in mapping.as_chunks_mut().0 {
-                    *pixel = color_to_fill;
+                            // SAFETY: This is fine, the CRTC is not currently reading it nor anything
+                            // writing/reading to this
+                            let mapping = unsafe { back_buffer.mapping.get_mut() };
+                            for pixel in mapping.as_chunks_mut().0 {
+                                *pixel = color_to_fill;
+                            }
+
+                            backbuffer_ready = true;
+                        }
+
+                        // Page flip is complete, now backbuffer can be touched
+                        primary_gpu::Event::PageFlipDone(event) => {
+                            if !Arc::ptr_eq(&event.crtc, &self.main_crtc) {
+                                // Don't know what this page flip done from ignore it
+                                warn!("Unknown crtc in page flip done event");
+                                continue;
+                            }
+
+                            pageflip_in_progress = false;
+                        }
+
+                        // Dont care the unknown
+                        primary_gpu::Event::Unknown(_) => (),
+                    }
                 }
 
-                cur_seq = (cur_seq + 1) % colors.len();
+                if !pageflip_in_progress && backbuffer_ready {
+                    pageflip_in_progress = true;
+                    backbuffer_ready = false;
+
+                    mem::swap(&mut front_buffer, &mut back_buffer);
+                    front_buffer
+                        .framebuffer
+                        .dirty()
+                        .expect("Cannot dirty front buffer");
+                    self.gpu
+                        .create_atomic_req()
+                        .plane_attach_framebuffer(&self.main_plane, Some(&front_buffer.framebuffer))
+                        .request_pageflip_event(true)
+                        .nonblocking(true)
+                        .commit()
+                        .expect("Cannot do page flip");
+                }
             }
         }
     }

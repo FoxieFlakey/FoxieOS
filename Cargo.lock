@@ -677,6 +677,7 @@ dependencies = [
  "anyhow",
  "drm",
  "drm-ffi 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "enumflags2",
  "nix",
  "parking_lot 0.13.0",
  "procfs",
