@@ -69,6 +69,12 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     .context("Copying libgcc_s.so")?;
 
     util::copy_file(
+        "./extra/empty_librt.a",
+        crate::rootfs_dir().join("system/lib/librt.a"),
+    )
+    .context("Copying empty librt.a")?;
+
+    util::copy_file(
         "./extra/busybox",
         crate::rootfs_dir().join("system/bin/busybox"),
     )

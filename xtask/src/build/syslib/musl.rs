@@ -18,7 +18,7 @@ pub fn build() -> anyhow::Result<()> {
             .arg("--disable-static")
             .arg("--syslibdir=/system/lib")
             .arg("--libdir=/system/lib")
-            .arg("--bindir=/system/musl_bin")
+            .arg("--bindir=/system/bin")
             .arg("--target=x86_64")
             .arg("--host=x86_64")
             .arg("--enable-wrapper=no")
