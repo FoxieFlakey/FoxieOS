@@ -72,12 +72,6 @@ fn main() -> anyhow::Result<()> {
     caps::set(None, CapSet::Ambient, &caps::all())
         .context("Cannot restore ambient capability after setuid")?;
 
-    let runtime = Runtime::new(
-        foxie_base::MAIN_BINDER_PATH,
-        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceRegistry>::try_from_proxy(x)?))),
-    )
-    .context("Cannot initialize binder runtime")?;
-
     root_dev::discover_root().context("Cannot find root device")?;
     sandboxer::init().context("Initializing sandboxer")?;
 
@@ -89,6 +83,12 @@ fn main() -> anyhow::Result<()> {
     service_manager_ready_event_fd
         .read()
         .context("Cannot wait for service manager readyness")?;
+
+    let runtime = Runtime::new(
+        foxie_base::MAIN_BINDER_PATH,
+        ContextManagerInfo::Remote(Box::new(|x| Ok(<dyn IServiceRegistry>::try_from_proxy(x)?))),
+    )
+    .context("Cannot initialize binder runtime")?;
 
     let service_manager = runtime
         .get_manager()
