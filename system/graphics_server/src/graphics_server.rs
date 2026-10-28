@@ -16,7 +16,6 @@ use nice_drm_uwu::{
         connector::{Connector, State},
         crtc::{Crtc, VBlankSequenceFlags, VBlankSequenceTarget},
         dumb_buffer::{BufferFormat, BufferModifier, DumbBuffer, mapping::DumbMapping},
-        encoder::Encoder,
         framebuffer::Framebuffer,
         master_state::MasterGuard,
         mode::Mode,
@@ -38,8 +37,6 @@ pub struct GraphicsServer {
     #[expect(unused)]
     master_lock: Yoke<MasterGuard<'static>, Arc<PrimaryGpu>>,
     main_crtc: Arc<Crtc>,
-    #[expect(unused)]
-    main_encoder: Arc<Encoder>,
     main_connector: Connector,
     main_mode: Mode,
     main_plane: Arc<Plane>,
@@ -171,7 +168,7 @@ impl GraphicsServer {
             }
         }
 
-        let (main_connector, main_encoder, main_crtc, main_mode, main_plane) = connectors
+        let (main_connector, main_crtc, main_mode, main_plane) = connectors
             .into_iter()
             .filter(|x| x.state() == State::Connected)
             .map(|x| (x.current_encoder().cloned(), x))
@@ -185,21 +182,21 @@ impl GraphicsServer {
             })
             .flat_map(|(conn, enc, crtc)| {
                 match crtc.mode() {
-                    Ok(mode) => mode.map(|mode| (conn, enc, crtc, mode)),
+                    Ok(mode) => mode.map(|mode| (conn, crtc, mode)),
                     Err(e) => {
                         warn!("Cannot get mode of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config: {e}");
                         None
                     },
                 }
             })
-            .flat_map(|(conn, enc, crtc, mode)| {
+            .flat_map(|(conn, crtc, mode)| {
                 match crtc.get_planes().first() {
                     Some(plane) => {
                         let plane = plane.clone();
-                        Some((conn, enc, crtc, mode, plane))
+                        Some((conn, crtc, mode, plane))
                     },
                     None => {
-                        warn!("Cannot get primary plane of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config because missing plane");
+                        warn!("Cannot get primary plane of CRTC {crtc} that is attached to connector {conn}, skipping this config because missing plane");
                         None
                     },
                 }
@@ -207,7 +204,7 @@ impl GraphicsServer {
             .next()
             .ok_or(anyhow!("Cannot find active usable connector"))?;
 
-        info!("Found this config ({main_crtc} -> {main_encoder} -> {main_connector}) using it");
+        info!("Found this config ({main_crtc}  -> {main_connector}) using it");
 
         gpu.create_atomic_req()
             // Connect CRTC to connector
@@ -226,7 +223,6 @@ impl GraphicsServer {
             gpu,
             master_lock,
             main_crtc,
-            main_encoder,
             main_connector,
             main_mode,
             main_plane,
