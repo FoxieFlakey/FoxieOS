@@ -9,6 +9,6 @@ clap = { version = "4.6.7", features = ["derive"] }
 foxie_base = { version = "0.1.0", path = "../foxie_base" }
 log = "0.4.34"
 nice_drm_uwu = { version = "0.1.0", path = "../../libs/nice_drm_uwu" }
-nix = { version = "0.31.3", features = ["event", "signal"] }
+nix = { version = "0.31.3", features = ["event", "signal", "time"] }
 parking_lot = "0.13.0"
 yoke = "0.8.4"

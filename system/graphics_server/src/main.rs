@@ -30,10 +30,11 @@ fn main() -> anyhow::Result<()> {
                 .context("--ready-event-fd is not valid fd")?,
         ))
     };
-    let _server = GraphicsServer::new().context("Cannot initialze graphics server")?;
+    let server = GraphicsServer::new().context("Cannot initialze graphics server")?;
 
     retry_eintr(|| ready_event_fd.write(1)).context("Cannot send ready notification")?;
 
     SHUTDOWN_CHANGED.wait_while(&mut CAN_SHUTDOWN.lock(), |&mut x| !x);
+    drop(server);
     Ok(())
 }

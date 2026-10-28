@@ -1,6 +1,13 @@
-use std::sync::Arc;
+use std::{
+    mem,
+    os::fd::AsFd,
+    sync::{Arc, OnceLock},
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 use anyhow::{Context, anyhow, bail};
+use foxie_base::util::retry_eintr;
 use log::{info, warn};
 use nice_drm_uwu::{
     gpu::ClientCapability,
@@ -16,33 +23,53 @@ use nice_drm_uwu::{
         plane::Plane,
     },
 };
+use nix::{
+    poll::{self, PollFd, PollFlags, PollTimeout},
+    sys::{
+        eventfd::EventFd,
+        timer::{Expiration, TimerSetTimeFlags},
+        timerfd::{ClockId, TimerFd, TimerFlags},
+    },
+};
 use yoke::Yoke;
 
 pub struct GraphicsServer {
-    #[expect(unused)]
     gpu: Arc<PrimaryGpu>,
     #[expect(unused)]
     master_lock: Yoke<MasterGuard<'static>, Arc<PrimaryGpu>>,
-    #[expect(unused)]
     main_crtc: Arc<Crtc>,
     #[expect(unused)]
     main_encoder: Arc<Encoder>,
-    #[expect(unused)]
     main_connector: Connector,
-    #[expect(unused)]
     main_mode: Mode,
-    #[expect(unused)]
     main_plane: Arc<Plane>,
+
+    do_shutdown: Arc<EventFd>,
+    thread: OnceLock<JoinHandle<()>>,
+}
+
+pub(super) struct Frame {
+    framebuffer: Framebuffer,
     #[expect(unused)]
-    framebuffer_handle: Framebuffer,
-    #[expect(unused)]
-    framebuffer: DumbBuffer,
-    #[expect(unused)]
-    framebuffer_mapping: DumbMapping<'static>,
+    buf: DumbBuffer,
+    mapping: DumbMapping<'static>,
+}
+
+impl Drop for GraphicsServer {
+    fn drop(&mut self) {
+        self.do_shutdown
+            .write(1)
+            .expect("Cannot notify graphics server thread");
+
+        let join = self.thread.take().unwrap();
+        if join.thread().id() != thread::current().id() {
+            join.join().unwrap();
+        }
+    }
 }
 
 impl GraphicsServer {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> anyhow::Result<Arc<Self>> {
         let gpu = PrimaryGpu::open("/dev/dri/card0").context("Cannot open GPU")?;
         let busid = gpu.get_basic_gpu().get_bus_id();
         let driver = gpu.get_basic_gpu().driver_info();
@@ -182,62 +209,20 @@ impl GraphicsServer {
 
         info!("Found this config ({main_crtc} -> {main_encoder} -> {main_connector}) using it");
 
-        let buf = gpu
-            .alloc_dumb_buffer(
-                (
-                    main_mode.resolution().0.into(),
-                    main_mode.resolution().1.into(),
-                ),
-                BufferModifier::Linear,
-                BufferFormat::Xrgb8888,
-            )
-            .context("Cannot create dumb buffer for framebuffer")?;
-
-        let framebuffer = buf
-            .create_framebuffer()
-            .context("Cannot create framebuffer out of dumb buffer")?;
-
         gpu.create_atomic_req()
             // Connect CRTC to connector
             .connector_attach_crtc(&main_connector, Some(&main_crtc))
             // Set mode on CRTC
             .crtc_set_mode(&main_crtc, main_mode.clone())
             .crtc_set_active(&main_crtc, true)
-            // Then attach CRTC and framebuffer to a plane
-            .plane_attach_crtc(&main_plane, Some(&main_crtc))
-            .plane_attach_framebuffer(&main_plane, Some(&framebuffer))
-            // And now tell CRTC where to scan
-            .plane_set_crtc_x(&main_plane, 0)
-            .plane_set_crtc_y(&main_plane, 0)
-            .plane_set_crtc_w(&main_plane, main_mode.resolution().0.into())
-            .plane_set_crtc_h(&main_plane, main_mode.resolution().1.into())
-            // And tell where to place the framebuffer in a plane
-            .plane_set_src_x(&main_plane, 0)
-            .plane_set_src_y(&main_plane, 0)
-            .plane_set_src_w(&main_plane, framebuffer.width())
-            .plane_set_src_h(&main_plane, framebuffer.height())
-            // And do first pageflip too
-            .pageflip(true)
+            // Then dont attach CRTC or framebuffer to plane
+            .plane_attach_crtc(&main_plane, None)
+            .plane_attach_framebuffer(&main_plane, None)
             .commit()
             .context("Cannot do atomic modeset")?;
 
         info!("Perform atomic set!");
-
-        let mut framebuffer_mapping = buf
-            .map()
-            .context("Cannot map framebuffer")?
-            .forget_lifetime();
-
-        // SAFETY: We havent sent that buffer to other process yet
-        let bytes = unsafe { framebuffer_mapping.get_mut() };
-        let color = (0x682B2Au32).to_le_bytes();
-        for chunk in bytes.as_chunks_mut().0 {
-            *chunk = color;
-        }
-
-        framebuffer.dirty().context("Cannot dirty framebuffer")?;
-
-        Ok(Self {
+        let this = Arc::new(Self {
             gpu,
             master_lock,
             main_crtc,
@@ -245,9 +230,145 @@ impl GraphicsServer {
             main_connector,
             main_mode,
             main_plane,
-            framebuffer_mapping,
-            framebuffer: buf,
-            framebuffer_handle: framebuffer,
+            do_shutdown: Arc::new(EventFd::new().context("Cannot create shutdown eventfd")?),
+            thread: OnceLock::new(),
+        });
+
+        let this_cloned = this.clone();
+        this.thread
+            .set(thread::spawn(move || this_cloned.run()))
+            .unwrap();
+        Ok(this)
+    }
+
+    fn alloc_framebuffer(&self) -> anyhow::Result<Frame> {
+        let dumb_buf = self
+            .gpu
+            .alloc_dumb_buffer(
+                (
+                    self.main_mode.resolution().0.into(),
+                    self.main_mode.resolution().1.into(),
+                ),
+                BufferModifier::Linear,
+                BufferFormat::Xrgb8888,
+            )
+            .context("Cannot allocate dumb buffer")?;
+        let framebuffer = dumb_buf
+            .create_framebuffer()
+            .context("Cannot crate framebuffer handle from dumb buffer")?;
+        let mapping = dumb_buf
+            .map()
+            .context("Cannot map dumb buffer")?
+            .forget_lifetime();
+
+        Ok(Frame {
+            framebuffer,
+            buf: dumb_buf,
+            mapping,
         })
+    }
+
+    fn run(mut self: Arc<Self>) {
+        let shutdown_fd = self.do_shutdown.clone();
+        let server = Arc::downgrade(&self);
+
+        let mut front_buffer = self
+            .alloc_framebuffer()
+            .expect("Cannot allocate front buffer");
+        let mut back_buffer = self
+            .alloc_framebuffer()
+            .expect("Cannot allocate back buffer");
+
+        // Do first modeset
+        self.gpu
+            .create_atomic_req()
+            // Connect CRTC to connector
+            .connector_attach_crtc(&self.main_connector, Some(&self.main_crtc))
+            // Set mode on CRTC
+            .crtc_set_mode(&self.main_crtc, self.main_mode.clone())
+            .crtc_set_active(&self.main_crtc, true)
+            // Then attach CRTC and framebuffer to a plane
+            .plane_attach_crtc(&self.main_plane, Some(&self.main_crtc))
+            .plane_attach_framebuffer(&self.main_plane, Some(&front_buffer.framebuffer))
+            // And now tell CRTC where to scan
+            .plane_set_crtc_x(&self.main_plane, 0)
+            .plane_set_crtc_y(&self.main_plane, 0)
+            .plane_set_crtc_w(&self.main_plane, self.main_mode.resolution().0.into())
+            .plane_set_crtc_h(&self.main_plane, self.main_mode.resolution().1.into())
+            // And tell where to place the framebuffer in a plane
+            .plane_set_src_x(&self.main_plane, 0)
+            .plane_set_src_y(&self.main_plane, 0)
+            .plane_set_src_w(&self.main_plane, front_buffer.framebuffer.width())
+            .plane_set_src_h(&self.main_plane, front_buffer.framebuffer.height())
+            // And do first pageflip too
+            .pageflip(true)
+            .commit()
+            .expect("Cannot do atomic modeset");
+
+        drop(self);
+
+        let render_timer = TimerFd::new(
+            ClockId::CLOCK_MONOTONIC,
+            TimerFlags::TFD_CLOEXEC | TimerFlags::TFD_NONBLOCK,
+        )
+        .expect("Cannot create render timer");
+        render_timer
+            .set(
+                Expiration::Interval(Duration::from_secs(1).into()),
+                TimerSetTimeFlags::empty(),
+            )
+            .expect("Cannot arm timer");
+
+        let colors: [u32; _] = [0x682b2a, 0xf9a147, 0x1862ff, 0xfcfd4f, 0xff74b3];
+        let mut cur_seq = 0;
+
+        loop {
+            let mut polls = [
+                PollFd::new(shutdown_fd.as_fd(), PollFlags::POLLIN),
+                PollFd::new(render_timer.as_fd(), PollFlags::POLLIN),
+            ];
+
+            retry_eintr(|| poll::poll(&mut polls, PollTimeout::NONE)).expect("Cannot poll");
+
+            if !polls[0].revents().unwrap().is_empty() {
+                shutdown_fd.read().expect("Cannot acknowledge shutdown fd");
+                break;
+            }
+
+            if !polls[1].revents().unwrap().is_empty() {
+                render_timer.wait().expect("Cannot consume timer event");
+
+                // Do page flip
+                self = match server.upgrade() {
+                    Some(x) => x,
+                    None => continue,
+                };
+
+                mem::swap(&mut front_buffer, &mut back_buffer);
+
+                front_buffer
+                    .framebuffer
+                    .dirty()
+                    .expect("Cannot dirty front buffer");
+                self.gpu
+                    .create_atomic_req()
+                    .plane_attach_framebuffer(&self.main_plane, Some(&front_buffer.framebuffer))
+                    .pageflip(true)
+                    .commit()
+                    .expect("Cannot do page flip");
+
+                // Then we can render to back buffer
+                let color_to_fill = colors[cur_seq].to_le_bytes();
+
+                // SAFETY: This is fine, the CRTC is not currently reading it nor anything
+                // writing/reading to this
+                let mapping = unsafe { back_buffer.mapping.get_mut() };
+                for pixel in mapping.as_chunks_mut().0 {
+                    *pixel = color_to_fill;
+                }
+
+                cur_seq = (cur_seq + 1) % colors.len();
+            }
+        }
     }
 }

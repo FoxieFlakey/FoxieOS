@@ -675,7 +675,6 @@ name = "nice_drm_uwu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dma-buf",
  "drm",
  "drm-ffi 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix",
