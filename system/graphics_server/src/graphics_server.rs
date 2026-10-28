@@ -8,8 +8,9 @@ use nice_drm_uwu::{
         PrimaryGpu,
         connector::{Connector, State},
         crtc::Crtc,
-        dumb_buffer::{BufferFormat, BufferModifier},
+        dumb_buffer::{BufferFormat, BufferModifier, DumbBuffer, mapping::DumbMapping},
         encoder::Encoder,
+        framebuffer::Framebuffer,
         master_state::MasterGuard,
         mode::Mode,
         plane::Plane,
@@ -32,6 +33,12 @@ pub struct GraphicsServer {
     main_mode: Mode,
     #[expect(unused)]
     main_plane: Arc<Plane>,
+    #[expect(unused)]
+    framebuffer_handle: Framebuffer,
+    #[expect(unused)]
+    framebuffer: DumbBuffer,
+    #[expect(unused)]
+    framebuffer_mapping: DumbMapping<'static>,
 }
 
 impl GraphicsServer {
@@ -190,9 +197,43 @@ impl GraphicsServer {
             .create_framebuffer()
             .context("Cannot create framebuffer out of dumb buffer")?;
 
-        main_plane
-            .set_framebuffer_basic(&main_crtc, &framebuffer)
-            .context("Cannot set framebuffer to plane")?;
+        gpu.create_atomic_req()
+            // Connect CRTC to connector
+            .connector_attach_crtc(&main_connector, Some(&main_crtc))
+            // Set mode on CRTC
+            .crtc_set_mode(&main_crtc, main_mode.clone())
+            .crtc_set_active(&main_crtc, true)
+            // Then attach CRTC and framebuffer to a plane
+            .plane_attach_crtc(&main_plane, Some(&main_crtc))
+            .plane_attach_framebuffer(&main_plane, Some(&framebuffer))
+            // And now tell CRTC where to scan
+            .plane_set_crtc_x(&main_plane, 0)
+            .plane_set_crtc_y(&main_plane, 0)
+            .plane_set_crtc_w(&main_plane, main_mode.resolution().0.into())
+            .plane_set_crtc_h(&main_plane, main_mode.resolution().1.into())
+            // And tell where to place the framebuffer in a plane
+            .plane_set_src_x(&main_plane, 0)
+            .plane_set_src_y(&main_plane, 0)
+            .plane_set_src_w(&main_plane, framebuffer.width())
+            .plane_set_src_h(&main_plane, framebuffer.height())
+            // And do first pageflip too
+            .pageflip(true)
+            .commit()
+            .context("Cannot do atomic modeset")?;
+
+        info!("Perform atomic set!");
+
+        let mut framebuffer_mapping = buf
+            .map()
+            .context("Cannot map framebuffer")?
+            .forget_lifetime();
+
+        // SAFETY: We havent sent that buffer to other process yet
+        let bytes = unsafe { framebuffer_mapping.get_mut() };
+        let color = (0x682B2Au32).to_le_bytes();
+        for chunk in bytes.as_chunks_mut().0 {
+            *chunk = color;
+        }
 
         framebuffer.dirty().context("Cannot dirty framebuffer")?;
 
@@ -204,6 +245,9 @@ impl GraphicsServer {
             main_connector,
             main_mode,
             main_plane,
+            framebuffer_mapping,
+            framebuffer: buf,
+            framebuffer_handle: framebuffer,
         })
     }
 }
