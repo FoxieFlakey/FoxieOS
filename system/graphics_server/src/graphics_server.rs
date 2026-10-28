@@ -12,6 +12,7 @@ use nice_drm_uwu::{
         encoder::Encoder,
         master_state::MasterGuard,
         mode::Mode,
+        plane::Plane,
     },
 };
 use yoke::Yoke;
@@ -29,6 +30,8 @@ pub struct GraphicsServer {
     main_connector: Connector,
     #[expect(unused)]
     main_mode: Mode,
+    #[expect(unused)]
+    main_plane: Arc<Plane>,
 }
 
 impl GraphicsServer {
@@ -134,7 +137,7 @@ impl GraphicsServer {
             }
         }
 
-        let (main_connector, main_encoder, main_crtc, main_mode) = connectors
+        let (main_connector, main_encoder, main_crtc, main_mode, main_plane) = connectors
             .into_iter()
             .filter(|x| x.state() == State::Connected)
             .map(|x| (x.current_encoder().cloned(), x))
@@ -150,7 +153,19 @@ impl GraphicsServer {
                 match crtc.mode() {
                     Ok(mode) => mode.map(|mode| (conn, enc, crtc, mode)),
                     Err(e) => {
-                        warn!("Cannot mode of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config: {e}");
+                        warn!("Cannot get mode of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config: {e}");
+                        None
+                    },
+                }
+            })
+            .flat_map(|(conn, enc, crtc, mode)| {
+                match crtc.get_planes().first() {
+                    Some(plane) => {
+                        let plane = plane.clone();
+                        Some((conn, enc, crtc, mode, plane))
+                    },
+                    None => {
+                        warn!("Cannot get primary plane of CRTC {crtc} that is attached to encoder {enc} (thats attached to connector {conn}), skipping this config because missing plane");
                         None
                     },
                 }
@@ -175,6 +190,10 @@ impl GraphicsServer {
             .create_framebuffer()
             .context("Cannot create framebuffer out of dumb buffer")?;
 
+        main_plane
+            .set_framebuffer_basic(&main_crtc, &framebuffer)
+            .context("Cannot set framebuffer to plane")?;
+
         framebuffer.dirty().context("Cannot dirty framebuffer")?;
 
         Ok(Self {
@@ -184,6 +203,7 @@ impl GraphicsServer {
             main_encoder,
             main_connector,
             main_mode,
+            main_plane,
         })
     }
 }
