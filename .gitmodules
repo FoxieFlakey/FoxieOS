@@ -14,3 +14,12 @@
 	path = libs/drm
 	url = git@github.com:FoxieFlakey/fork-drm-rs
 	branch = fix-clips-ptr
+[submodule "syslibs/mesa"]
+	path = syslibs/mesa
+	url = https://gitlab.freedesktop.org/mesa/mesa.git
+[submodule "syslibs/libdrm"]
+	path = syslibs/libdrm
+	url = git@github.com:FoxieFlakey/libdrm-fork
+[submodule "syslibs/zlib-ng"]
+	path = syslibs/zlib-ng
+	url = https://github.com/zlib-ng/zlib-ng

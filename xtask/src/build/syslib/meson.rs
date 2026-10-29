@@ -7,7 +7,6 @@ use crate::{
     util,
 };
 
-#[expect(unused)]
 pub fn build<P1, P2>(
     src_dir: &P1,
     build_dir: &P2,
