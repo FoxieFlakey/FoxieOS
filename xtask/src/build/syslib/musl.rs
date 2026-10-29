@@ -2,7 +2,10 @@ use std::{fs::File, num::NonZero, path::PathBuf, process::Command, thread};
 
 use anyhow::Context;
 
-use crate::{build::syslib, util};
+use crate::{
+    build::syslib::{self, get_syslib_include_dir},
+    util,
+};
 
 pub fn build() -> anyhow::Result<()> {
     util::mkdir(get_musl_build_dir()).context("Creating musl build dir")?;
@@ -52,11 +55,35 @@ pub fn build() -> anyhow::Result<()> {
                     "Path to rootfs dir is not valid UTF-8 string: {x:#?}",
                 ))?
         ))
-        .arg("install")
+        .arg("install-libs")
         .status()
-        .context("Waiting for 'make install' result")?
+        .context("Waiting for 'make install-libs' result")?
         .exit_ok()
-        .context("Compiling Musl libc")?;
+        .context("Installig Musl libc")?;
+
+    Command::new("make")
+        .current_dir(&build_dir)
+        .arg(&format!(
+            "-j{}",
+            thread::available_parallelism().unwrap_or(NonZero::new(1).unwrap())
+        ))
+        .arg("DESTDIR=")
+        .arg(&format!(
+            "includedir={}",
+            get_syslib_include_dir()
+                .canonicalize()
+                .context("Canonicalizing include dir")?
+                .into_os_string()
+                .into_string()
+                .map_err(|x| anyhow::anyhow!(
+                    "Path to include dir is not valid UTF-8 string: {x:#?}",
+                ))?
+        ))
+        .arg("install-headers")
+        .status()
+        .context("Waiting for 'make install-headers' result")?
+        .exit_ok()
+        .context("Installig Musl libc headers")?;
 
     Ok(())
 }

@@ -38,41 +38,10 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     println!("Creating rootfs");
     util::mkdir(crate::rootfs_dir()).context("Creating rootfs dir")?;
 
-    println!("Building syslibs");
-    syslib::build().context("Building syslib")?;
-
-    Command::new("cargo")
-        .arg("build")
-        .arg("-Zjson-target-spec")
-        .arg("-Zbuild-std=core,alloc,std,panic_unwind")
-        .arg("--target")
-        .arg("x86_64-foxieos-linux-musl.json")
-        .status()
-        .context("Waiting for cargo build result")?
-        .exit_ok()
-        .context("Building system binaries")?;
-
     for dir in DIRS {
         util::mkdir(crate::rootfs_dir().join(dir))
             .with_context(|| format!("Creating dir {dir}"))?;
     }
-
-    util::copy_file(
-        "./extra/libgcc_s.so",
-        crate::rootfs_dir().join("lib/libgcc_s.so.1"),
-    )
-    .context("Copying libgcc_s.so")?;
-    util::copy_file(
-        "./extra/libgcc_s.so",
-        crate::rootfs_dir().join("lib/libgcc_s.so"),
-    )
-    .context("Copying libgcc_s.so")?;
-
-    util::copy_file(
-        "./extra/empty_librt.a",
-        crate::rootfs_dir().join("system/lib/librt.a"),
-    )
-    .context("Copying empty librt.a")?;
 
     util::copy_file(
         "./extra/busybox",
@@ -87,6 +56,20 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     .overwrite_if_size_differs(true)
     .run()
     .context("Copying busybox_overlay")?;
+
+    println!("Building syslibs");
+    syslib::build().context("Building syslib")?;
+
+    Command::new("cargo")
+        .arg("build")
+        .arg("-Zjson-target-spec")
+        .arg("-Zbuild-std=core,alloc,std,panic_unwind")
+        .arg("--target")
+        .arg("x86_64-foxieos-linux-musl.json")
+        .status()
+        .context("Waiting for cargo build result")?
+        .exit_ok()
+        .context("Building system binaries")?;
 
     util::copy_file("./extra/htop", crate::rootfs_dir().join("system/bin/htop"))
         .context("Copying htop")?;

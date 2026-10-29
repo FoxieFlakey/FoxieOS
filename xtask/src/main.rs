@@ -1,4 +1,5 @@
 #![feature(exit_status_error)]
+#![feature(hash_map_macro)]
 
 use std::{
     env,
