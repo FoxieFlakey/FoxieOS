@@ -106,7 +106,7 @@ project_dir = '{}'
 
     println!("Building LLVM's libc++");
     cmake::build(
-        &get_syslib_src_dir().join("llvm/runtimes"),
+        &get_syslib_src_dir().join("llvm-stripped/runtimes"),
         &get_syslib_build_dir().join("llvm-libcxx-rt"),
         // ChatGPT suggested to make it works
         &hash_map! {
