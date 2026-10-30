@@ -8,7 +8,10 @@ use crate::util;
 mod syslib;
 
 #[derive(Args)]
-pub struct BuildArgs {}
+pub struct BuildArgs {
+    #[arg(long, default_value = "false")]
+    build_syslib: bool,
+}
 
 static CRATES: &[&str] = &[
     "init",
@@ -35,7 +38,7 @@ static DIRS: &[&str] = &[
     "mnt",
 ];
 
-pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
+pub fn main(args: BuildArgs) -> anyhow::Result<()> {
     println!("Creating rootfs");
     util::mkdir(crate::rootfs_dir()).context("Creating rootfs dir")?;
 
@@ -58,8 +61,14 @@ pub fn main(_args: BuildArgs) -> anyhow::Result<()> {
     .run()
     .context("Copying busybox_overlay")?;
 
-    println!("Building syslibs");
-    syslib::build().context("Building syslib")?;
+    if args.build_syslib {
+        println!("Building syslibs");
+        syslib::build().context("Building syslib")?;
+    } else {
+        println!(
+            "Not building syslibs (IF this is first time, you must build syslib once or build if you change. The rootfs image will not be bootlable without it)"
+        );
+    }
 
     Command::new("cargo")
         .arg("build")
