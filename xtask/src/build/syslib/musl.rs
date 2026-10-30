@@ -1,4 +1,4 @@
-use std::{fs::File, num::NonZero, path::PathBuf, process::Command, thread};
+use std::{fs::File, io::Write, num::NonZero, path::PathBuf, process::Command, thread};
 
 use anyhow::Context;
 
@@ -84,6 +84,13 @@ pub fn build() -> anyhow::Result<()> {
         .context("Waiting for 'make install-headers' result")?
         .exit_ok()
         .context("Installig Musl libc headers")?;
+
+    // Applying the ld-musl-x86_64.path so musl know to find in /system/lib
+    util::mkdir(crate::rootfs_dir().join("system/etc")).context("Cannot mkdir /system/etc")?;
+    File::create(crate::rootfs_dir().join("system/etc/ld-musl-x86_64.path"))
+        .context("Cannt open musl ld path file")?
+        .write_all(b"/system/lib\n")
+        .context("Cannot write to musl ld path file")?;
 
     Ok(())
 }

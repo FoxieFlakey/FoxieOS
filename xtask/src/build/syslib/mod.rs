@@ -29,12 +29,12 @@ pub fn build() -> anyhow::Result<()> {
 
     util::copy_file(
         "./extra/libgcc_s.so",
-        crate::rootfs_dir().join("lib/libgcc_s.so.1"),
+        crate::rootfs_dir().join("system/lib/libgcc_s.so.1"),
     )
     .context("Copying libgcc_s.so")?;
     util::copy_file(
         "./extra/libgcc_s.so",
-        crate::rootfs_dir().join("lib/libgcc_s.so"),
+        crate::rootfs_dir().join("system/lib/libgcc_s.so"),
     )
     .context("Copying libgcc_s.so")?;
 
@@ -270,6 +270,69 @@ project_dir = '{}'
         ],
     )
     .context("Building mesa")?;
+
+    println!("Building vulkan headers");
+    cmake::build(
+        &get_syslib_src_dir().join("vulkan-headers"),
+        &get_syslib_build_dir().join("vulkan-headers"),
+        &hash_map! {
+            "VULKAN_HEADERS_ENABLE_TESTS".to_string() => "OFF".to_string(),
+            "VULKAN_HEADERS_ENABLE_MODULE".to_string() => "OFF".to_string(),
+        },
+        &[],
+        &["Unspecified"],
+        &[],
+        &[],
+    )
+    .context("Building vulkan-headers")?;
+
+    println!("Building vulkan loader");
+    cmake::build(
+        &get_syslib_src_dir().join("vulkan-loader"),
+        &get_syslib_build_dir().join("vulkan-loader"),
+        &hash_map! {
+            "BUILD_WSI_XCB_SUPPORT".to_string() => "OFF".to_string(),
+            "BUILD_WSI_XLIB_SUPPORT".to_string() => "OFF".to_string(),
+            "BUILD_WSI_XLIB_XRANDR_SUPPORT".to_string() => "OFF".to_string(),
+            "BUILD_WSI_WAYLAND_SUPPORT".to_string() => "OFF".to_string(),
+            "BUILD_TESTS".to_string() => "OFF".to_string(),
+            "FALLBACK_DATA_DIRS".to_string() => "/system/share".to_string(),
+            "FALLBACK_CONFIG_DIRS".to_string() => "/system/etc".to_string(),
+        },
+        &[],
+        &["Unspecified"],
+        &[],
+        &[],
+    )
+    .context("Building vulkan-loader")?;
+
+    // Due limitation in vulkan loader? apparently cant install header seperately
+    // so install everything to dev sysroot first then copies the libs
+    Command::new("sh")
+        .arg("-c")
+        .arg(&format!(
+            "cp --remove-destination -- {0}/system/lib/libvulkan* {1}/system/lib/; exit $?",
+            get_syslib_dev_sysroot_dir()
+                .canonicalize()
+                .context("Canonicalizing dev sysroot dir")?
+                .into_os_string()
+                .into_string()
+                .map_err(|x| anyhow::anyhow!(
+                    "Path to dev sysroot dir is not valid UTF-8 string: {x:#?}",
+                ))?,
+            crate::rootfs_dir()
+                .canonicalize()
+                .context("Canonicalizing rootfs dir")?
+                .into_os_string()
+                .into_string()
+                .map_err(|x| anyhow::anyhow!(
+                    "Path to rootfs dir is not valid UTF-8 string: {x:#?}",
+                ))?
+        ))
+        .status()
+        .context("Cannot wait for shell while copying vulkan loader to final rootfs")?
+        .exit_ok()
+        .context("Cannot vulkan loader to final rootfs")?;
 
     Ok(())
 }

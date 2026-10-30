@@ -1,4 +1,4 @@
 [workspace]
 resolver = "3"
-members = ["system/foxie_base","system/service_manager", "system/service", "system/sandbox_helper", "xtask", "system/init", "system/tty_spawner", "system/sandboxer", "libs/pidfd-util", "system/graphics_server", "libs/nice_drm_uwu", "libs/dma-buf/dma-buf", "libs/dma-buf/dma-buf-sys"]
+members = ["system/foxie_base","system/service_manager", "system/service", "system/sandbox_helper", "xtask", "system/init", "system/tty_spawner", "system/sandboxer", "libs/pidfd-util", "system/graphics_server", "libs/nice_drm_uwu", "libs/dma-buf/dma-buf", "libs/dma-buf/dma-buf-sys", "system/vk_hewwo"]
 exclude = ["libs/drm"]

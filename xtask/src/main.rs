@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
                         .map_err(|x| anyhow!("Path contained non UTF-8 sequence: {x:#?}"))?
                 ))
                 .arg("-device")
-                .arg("virtio-gpu-pci")
+                .arg("virtio-gpu-gl-pci,venus=on,blob=on,hostmem=1G")
                 .arg("-vga")
                 .arg("none")
                 .arg("-display")

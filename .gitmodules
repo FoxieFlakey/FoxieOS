@@ -23,3 +23,9 @@
 [submodule "syslibs/zlib-ng"]
 	path = syslibs/zlib-ng
 	url = https://github.com/zlib-ng/zlib-ng
+[submodule "syslibs/vulkan-loader"]
+	path = syslibs/vulkan-loader
+	url = https://github.com/KhronosGroup/Vulkan-Loader
+[submodule "syslibs/vulkan-headers"]
+	path = syslibs/vulkan-headers
+	url = https://github.com/KhronosGroup/vulkan-headers

@@ -18,6 +18,7 @@ static CRATES: &[&str] = &[
     "tty_spawner",
     "sandboxer",
     "graphics_server",
+    "vk_hewwo",
 ];
 
 static DIRS: &[&str] = &[

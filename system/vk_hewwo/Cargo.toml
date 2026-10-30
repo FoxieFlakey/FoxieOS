@@ -1,0 +1,8 @@
+[package]
+name = "vk_hewwo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+vulkano = { version = "0.35.2", default-features = false }
