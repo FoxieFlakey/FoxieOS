@@ -11,6 +11,8 @@ mod syslib;
 pub struct BuildArgs {
     #[arg(long, default_value = "false")]
     build_syslib: bool,
+    #[arg(long, default_value = "false")]
+    release: bool,
 }
 
 static CRATES: &[&str] = &[
@@ -76,6 +78,7 @@ pub fn main(args: BuildArgs) -> anyhow::Result<()> {
         .arg("-Zbuild-std=core,alloc,std,panic_unwind")
         .arg("--target")
         .arg("x86_64-foxieos-linux-musl.json")
+        .arg(if args.release { "--release" } else { "--debug" })
         .status()
         .context("Waiting for cargo build result")?
         .exit_ok()
@@ -92,7 +95,11 @@ pub fn main(args: BuildArgs) -> anyhow::Result<()> {
 
     for c in CRATES {
         util::copy_file(
-            crate::target_dir().join(format!("x86_64-foxieos-linux-musl/debug/{}", c)),
+            crate::target_dir().join(format!(
+                "x86_64-foxieos-linux-musl/{}/{}",
+                if args.release { "release" } else { "debug" },
+                c
+            )),
             crate::rootfs_dir().join(format!("system/bin/{c}")),
         )
         .with_context(|| format!("Copying {c}"))?;
