@@ -105,11 +105,21 @@ pub fn main(args: BuildArgs) -> anyhow::Result<()> {
         .with_context(|| format!("Copying {c}"))?;
     }
 
-    Command::new("mkfs.erofs")
-        .arg("--all-root")
+    let mut mkfs = Command::new("mkfs.erofs");
+    mkfs.arg("--all-root")
         .arg(crate::rootfs_image_file())
-        .arg(crate::rootfs_dir())
-        .env("RUSTFLAGS", "-C relocation-model=static")
+        .arg(crate::rootfs_dir());
+
+    if args.release {
+        mkfs.arg("-C")
+            .arg("65536")
+            .arg("-E")
+            .arg("fragments,dedupe")
+            .arg("-z")
+            .arg("lz4hc:12");
+    }
+
+    mkfs.env("RUSTFLAGS", "-C relocation-model=static")
         .status()
         .context("Waiting for mkfs.erofs result")?
         .exit_ok()
